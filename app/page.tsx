@@ -49,7 +49,7 @@ export default function HomePage() {
       <header className="bg-blue-900 text-white p-4 flex justify-between items-center shadow-xl sticky top-0 z-40">
         <div className="flex items-center space-x-3 space-x-reverse">
           <img
-            src="/logo.jpg"
+            src="/logo.png"
             alt="New Bright Scholars Science Academy Logo"
             className="w-12 h-12 rounded-full object-cover bg-white p-0.5 shadow"
           />
@@ -69,7 +69,7 @@ export default function HomePage() {
             onClick={() => setLang(lang === 'en' ? 'ur' : 'en')}
             className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-3 py-1.5 rounded-lg text-sm font-semibold transition"
           >
-            {lang === 'en' ? 'اردو نستعلیق' : 'English'}
+            {lang === 'en' ? 'اردو ' : 'English'}
           </button>
           
           <Link
