@@ -6,7 +6,6 @@ export default function PWAInstallPrompt() {
   const [showPrompt, setShowPrompt] = useState(false);
 
   useEffect(() => {
-    // 1. Register Service Worker
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker
         .register('/sw.js')
@@ -14,11 +13,10 @@ export default function PWAInstallPrompt() {
         .catch((err) => console.log('SW Registration failed:', err));
     }
 
-    // 2. Listen for Auto-Install Event
     const handleBeforeInstallPrompt = (e: any) => {
       e.preventDefault();
       setDeferredPrompt(e);
-      setShowPrompt(true); // Show Auto Popup Banner
+      setShowPrompt(true);
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
@@ -44,30 +42,51 @@ export default function PWAInstallPrompt() {
   if (!showPrompt) return null;
 
   return (
-    <div className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:max-w-sm bg-slate-900 text-white p-4 rounded-3xl shadow-2xl border border-slate-700 z-[9999] flex items-center justify-between gap-3 animate-bounce">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-white rounded-2xl flex items-center justify-center text-xl shrink-0">
-          📲
+    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[99999] flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-sm w-full shadow-2xl border text-center space-y-5 animate-in fade-in zoom-in duration-200">
+        
+        {/* LOGO CONTAINER WITH SAFE FALLBACK */}
+        <div className="w-20 h-20 bg-slate-100 rounded-3xl border border-slate-200 flex items-center justify-center mx-auto overflow-hidden p-2 shadow-inner">
+          <img
+            src="/logo.png"
+            alt="Academy Logo"
+            className="w-full h-full object-contain"
+            onError={(e) => {
+              // Fallback to Icon if image file is not found
+              e.currentTarget.style.display = 'none';
+              if (e.currentTarget.parentElement) {
+                e.currentTarget.parentElement.innerText = '🎓';
+                e.currentTarget.parentElement.className = 'w-20 h-20 bg-blue-950 rounded-3xl flex items-center justify-center text-4xl shadow-inner mx-auto';
+              }
+            }}
+          />
         </div>
-        <div>
-          <h4 className="text-xs font-black text-white">Install Academy App</h4>
-          <p className="text-[10px] text-slate-300 font-medium">Install for faster mobile access</p>
-        </div>
-      </div>
 
-      <div className="flex items-center gap-1.5 shrink-0">
-        <button
-          onClick={handleInstallClick}
-          className="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black px-3.5 py-2 rounded-xl text-xs shadow-md transition"
-        >
-          Install
-        </button>
-        <button
-          onClick={() => setShowPrompt(false)}
-          className="text-slate-400 hover:text-white p-1 text-xs"
-        >
-          ✕
-        </button>
+        <div className="space-y-1.5">
+          <h3 className="text-xl font-black text-blue-950">
+            Install Official App!
+          </h3>
+          <p className="text-xs text-slate-500 font-medium leading-relaxed">
+            Install the app on your device for offline sync, fast performance, and instant portal access.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2 pt-2">
+          <button
+            onClick={handleInstallClick}
+            className="flex-1 py-3 bg-red-500 hover:bg-red-600 text-white font-black text-xs rounded-xl transition shadow-md"
+          >
+            Install Now
+          </button>
+          
+          <button
+            onClick={() => setShowPrompt(false)}
+            className="flex-1 py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 font-extrabold text-xs rounded-xl transition"
+          >
+            Later
+          </button>
+        </div>
+
       </div>
     </div>
   );
