@@ -17,7 +17,7 @@ export default function AdminDashboardPage() {
     { title: 'Class Assign', subTitle: 'Assign Teacher Classes', icon: '🔗', path: '/admin/assign-class' },
     { title: 'Student Promote', subTitle: 'Promote Academic Session', icon: '📈', path: '/admin/promote-students' },
     { title: 'Add Class', subTitle: 'Class & Section Setup', icon: '🏫', path: '/admin/add_class' },
-    { title: 'Add Account Number', subTitle: 'Payment Bank Accounts', icon: '💳', path: '/admin/payment-accounts' },
+    { title: 'Add Account Number', subTitle: 'Payment Bank Accounts', icon: '💳', path: '/admin/accounts' },
     { title: 'Status & Reports', subTitle: 'System Analytics', icon: '📊', path: '/admin/status-center' },
   ];
 
