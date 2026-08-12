@@ -45,29 +45,56 @@ export default function StatusCenterPage() {
     setLoading(true);
 
     try {
-      // Fetch Classes
-      const { data: classesData, count: classCount } = await supabase
-        .from('classes')
-        .select('*', { count: 'exact' });
+      // 1. Fetch Classes
+      const { data: classesData } = await supabase.from('classes').select('*');
       setClassesList(classesData || []);
 
-      // Fetch Students
+      // 2. Fetch Active Students
       const { data: studentsData } = await supabase
         .from('students')
         .select('*, classes(class_name, section_name)');
       setStudentsList(studentsData || []);
 
-      // Calculate Total Active Students (Fix for 0 count issue)
-      const realTotalStudents = studentsData ? studentsData.length : 0;
+      const activeStudents = studentsData ? studentsData.filter((s) => s.is_active !== false) : [];
 
-      // Fetch Staff
+      // 3. Fetch Fee Structures & Concessions for Exact Calculations
+      const { data: feeStructData } = await supabase.from('class_fee_structure').select('*');
+      const { data: concessionsData } = await supabase.from('student_fee_concessions').select('*');
+      const { data: collectionsData } = await supabase.from('fee_collections').select('*');
+
+      // Calculate Total Expected Fee after Concessions
+      let totalExpectedFees = 0;
+      activeStudents.forEach((st) => {
+        let baseFee = 2000;
+        if (st.monthly_fee && parseFloat(st.monthly_fee) > 0) {
+          baseFee = parseFloat(st.monthly_fee);
+        } else if (feeStructData) {
+          const struct = feeStructData.find((f) => f.class_id === st.class_id);
+          if (struct && struct.tuition_fee) baseFee = parseFloat(struct.tuition_fee);
+        }
+
+        const conc = concessionsData?.find((c) => c.student_id === st.id);
+        const discount = conc ? parseFloat(conc.discount_amount || 0) : 0;
+        const netFee = Math.max(0, baseFee - discount);
+
+        totalExpectedFees += netFee;
+      });
+
+      const totalCollected = collectionsData
+        ? collectionsData.reduce((sum, item) => sum + (parseFloat(item.amount_paid) || 0), 0)
+        : 0;
+
+      const totalPendingFees = Math.max(0, totalExpectedFees - totalCollected);
+      const feePercent = totalExpectedFees > 0 ? Math.round((totalCollected / totalExpectedFees) * 100) : 100;
+
+      // 4. Fetch Staff
       const { data: staffData } = await supabase.from('staff').select('*');
       setStaffList(staffData || []);
 
       const activeStaffCount = staffData?.filter((s) => s.is_active !== false).length || 0;
       const resignedStaffCount = staffData?.filter((s) => s.is_active === false).length || 0;
 
-      // Attendance Metrics
+      // 5. Attendance Metrics
       const todayDate = new Date().toISOString().split('T')[0];
       const { data: staffAtt } = await supabase.from('staff_attendance').select('status').eq('date', todayDate);
       let staffPresencePercent = 0;
@@ -83,26 +110,7 @@ export default function StatusCenterPage() {
         studentPresencePercent = Math.round((present / studentAtt.length) * 100);
       }
 
-      // Fee Collections
-      const { data: collections } = await supabase.from('fee_collections').select('amount_paid');
-      const totalCollected = collections ? collections.reduce((sum, item) => sum + (parseFloat(item.amount_paid) || 0), 0) : 0;
-
-      const { data: feeStructData } = await supabase.from('class_fee_structure').select('class_id, tuition_fee');
-      let totalExpectedFees = 0;
-      if (studentsData) {
-        studentsData.forEach((st) => {
-          if (st.is_active !== false) {
-            const struct = feeStructData?.find((f) => f.class_id === st.class_id);
-            const fee = st.monthly_fee ? parseFloat(st.monthly_fee) : struct ? parseFloat(struct.tuition_fee) : 2500;
-            totalExpectedFees += fee;
-          }
-        });
-      }
-
-      const totalPendingFees = Math.max(0, totalExpectedFees - totalCollected);
-      const feePercent = totalExpectedFees > 0 ? Math.round((totalCollected / totalExpectedFees) * 100) : 100;
-
-      // Staff Salaries
+      // 6. Salaries
       const { data: salaryData } = await supabase.from('salary_payments').select('net_paid, net_salary');
       const totalSalaryPaid = salaryData ? salaryData.reduce((sum, item) => sum + (parseFloat(item.net_paid || item.net_salary) || 0), 0) : 0;
 
@@ -113,11 +121,11 @@ export default function StatusCenterPage() {
       const salaryPercent = totalExpectedSalary > 0 ? Math.round((totalSalaryPaid / totalExpectedSalary) * 100) : 100;
 
       setStats({
-        totalStudents: realTotalStudents, // FIX APPLIED HERE
+        totalStudents: activeStudents.length,
         studentPresentPercent: studentPresencePercent,
         totalStaff: activeStaffCount,
         staffPresentPercent: staffPresencePercent,
-        totalClasses: classCount || (classesData ? classesData.length : 0),
+        totalClasses: classesData ? classesData.length : 0,
         collectedFees: totalCollected,
         pendingFees: totalPendingFees,
         feeCollectedPercent: Math.min(100, feePercent),
@@ -317,9 +325,9 @@ export default function StatusCenterPage() {
           </div>
         </div>
 
-        {/* 3. TOTAL CLASSES CARD (OPENS CLASS MANAGEMENT PAGE) */}
+        {/* 3. TOTAL CLASSES CARD (LINKS TO /admin/fee-management) */}
         <Link
-          href="/admin/classes"
+          href="/admin/fee-management"
           className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between hover:border-blue-900 cursor-pointer hover:shadow-md transition active:scale-[0.98]"
         >
           <div className="flex justify-between items-center">
@@ -337,9 +345,9 @@ export default function StatusCenterPage() {
           </div>
         </Link>
 
-        {/* 4. FEE COLLECTED CARD (OPENS FEE LIST PAGE) */}
+        {/* 4. FEE COLLECTED CARD (LINKS TO /admin/student-fees) */}
         <Link
-          href="/admin/fees"
+          href="/admin/student-fees"
           className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between hover:border-emerald-600 cursor-pointer hover:shadow-md transition active:scale-[0.98]"
         >
           <div className="flex justify-between items-center">
@@ -356,9 +364,9 @@ export default function StatusCenterPage() {
           </div>
         </Link>
 
-        {/* 5. PENDING FEES CARD (OPENS FEE LIST PAGE) */}
+        {/* 5. PENDING FEES CARD (LINKS TO /admin/student-fees) */}
         <Link
-          href="/admin/fees"
+          href="/admin/student-fees"
           className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between hover:border-rose-600 cursor-pointer hover:shadow-md transition active:scale-[0.98]"
         >
           <div className="flex justify-between items-center">
