@@ -1,8 +1,13 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
-export default function AdminAdmissionFormPage() {
+function AdminAdmissionFormContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const editId = searchParams.get('id'); // URL سے سٹوڈنٹ کی ID حاصل کرنا
+
   const [loading, setLoading] = useState(false);
   const [classesList, setClassesList] = useState<any[]>([]);
 
@@ -28,30 +33,56 @@ export default function AdminAdmissionFormPage() {
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
   useEffect(() => {
-    fetchClassesAndAutoNumbers();
-  }, []);
+    initForm();
+  }, [editId]);
 
-  // Fetch Classes and Calculate Max Auto Numbers
-  const fetchClassesAndAutoNumbers = async () => {
+  const initForm = async () => {
     setLoading(true);
 
+    // 1. Fetch Classes
     const { data: cData } = await supabase.from('classes').select('*').order('class_name', { ascending: true });
-    
     let defaultClassId = '';
     if (cData && cData.length > 0) {
       setClassesList(cData);
       defaultClassId = cData[0].id;
-      setSelectedClassId(defaultClassId);
-      setSectionName(cData[0].section_name || 'Section A');
     }
 
-    await calculateNextAutoNumbers(defaultClassId, cData || []);
+    // 2. Check if Edit Mode or New Admission Mode
+    if (editId) {
+      // EDIT MODE: Fetch Existing Student Data
+      const { data: st, error } = await supabase.from('students').select('*').eq('id', editId).single();
+      if (st && !error) {
+        setAdmissionNo(st.admission_no || st.registration_no || '');
+        setRollNo(st.roll_no || 1);
+        setFullName(st.full_name || '');
+        setFatherName(st.father_name || '');
+        setSelectedClassId(st.class_id || defaultClassId);
+        setSectionName(st.section_name || 'Section A');
+        setDob(st.dob || '');
+        setParentPhone(st.parent_phone || st.phone_no || '');
+        setWhatsappNumber(st.whatsapp || st.whatsapp_no || '');
+        setBFormNumber(st.b_form || '');
+        setAddress(st.address || '');
+        if (st.photo_url) {
+          setStudentPhoto(st.photo_url);
+        }
+      }
+    } else {
+      // NEW ADMISSION MODE: Calculate Next Auto Numbers
+      setSelectedClassId(defaultClassId);
+      if (cData && cData.length > 0) {
+        setSectionName(cData[0].section_name || 'Section A');
+      }
+      await calculateNextAutoNumbers(defaultClassId, cData || []);
+    }
 
     setLoading(false);
   };
 
-  // 🚀 SMART MAX NUMBER CALCULATION
+  // 🚀 SMART MAX NUMBER CALCULATION FOR NEW ADMISSIONS
   const calculateNextAutoNumbers = async (classId: string, currentClasses: any[] = classesList) => {
+    if (editId) return; // Don't calculate for existing student edit
+
     const { data: allStudents } = await supabase
       .from('students')
       .select('admission_no, registration_no');
@@ -122,7 +153,6 @@ export default function AdminAdmissionFormPage() {
         let width = img.width;
         let height = img.height;
 
-        // Max Dimension Constraint (e.g., 500px)
         const MAX_DIM = 500;
         if (width > height) {
           if (width > MAX_DIM) {
@@ -141,11 +171,9 @@ export default function AdminAdmissionFormPage() {
         const ctx = canvas.getContext('2d');
         ctx?.drawImage(img, 0, 0, width, height);
 
-        // Compress image using quality loop to strictly keep under 100 KB
         let quality = 0.75;
         let compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
 
-        // Base64 length to KB calculation: (length * 3 / 4) / 1024
         while (compressedDataUrl.length > 130000 && quality > 0.1) {
           quality -= 0.08;
           compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
@@ -165,10 +193,12 @@ export default function AdminAdmissionFormPage() {
     if (selectedClassObj) {
       setSectionName(selectedClassObj.section_name || 'Section A');
     }
-    calculateNextAutoNumbers(newClassId);
+    if (!editId) {
+      calculateNextAutoNumbers(newClassId);
+    }
   };
 
-  // Submit Form Data
+  // Submit Form Data (Handles both INSERT & UPDATE)
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAlert(null);
@@ -188,50 +218,79 @@ export default function AdminAdmissionFormPage() {
       father_name: fatherName.trim(),
       class_id: selectedClassId,
       section_name: sectionName,
+      dob: dob || null,
+      parent_phone: parentPhone.trim(),
       whatsapp: whatsappNumber.trim() || parentPhone.trim(),
+      b_form: bFormNumber.trim(),
       address: address.trim(),
-      photo_url: studentPhoto || null, // Saved base64 compressed photo
+      photo_url: studentPhoto || null,
       is_active: true,
     };
 
-    const { error } = await supabase.from('students').insert([payload]);
+    let error;
+    if (editId) {
+      // UPDATE Existing Student
+      const res = await supabase.from('students').update(payload).eq('id', editId);
+      error = res.error;
+    } else {
+      // INSERT New Student
+      const res = await supabase.from('students').insert([payload]);
+      error = res.error;
+    }
 
     setLoading(false);
 
     if (error) {
       setAlert({ type: 'error', msg: error.message });
     } else {
-      setAlert({ type: 'success', msg: `Student ${fullName} admitted successfully with Reg No ${admissionNo}!` });
-      
-      // Reset Form Fields
-      setFullName('');
-      setFatherName('');
-      setDob('');
-      setParentPhone('');
-      setWhatsappNumber('');
-      setBFormNumber('');
-      setAddress('');
-      setStudentPhoto('');
-      setPhotoSizeKb(null);
+      setAlert({
+        type: 'success',
+        msg: editId
+          ? `Student ${fullName} record updated successfully!`
+          : `Student ${fullName} admitted successfully with Reg No ${admissionNo}!`,
+      });
 
-      await calculateNextAutoNumbers(selectedClassId);
+      if (!editId) {
+        // Reset Form Fields only on new admission
+        setFullName('');
+        setFatherName('');
+        setDob('');
+        setParentPhone('');
+        setWhatsappNumber('');
+        setBFormNumber('');
+        setAddress('');
+        setStudentPhoto('');
+        setPhotoSizeKb(null);
+
+        await calculateNextAutoNumbers(selectedClassId);
+      } else {
+        // Redirect back to Status Center after 1.5s
+        setTimeout(() => {
+          router.push('/admin/status-center');
+        }, 1500);
+      }
     }
   };
 
   return (
-    <div className="p-3 md:p-6 max-w-5xl mx-auto space-y-6 font-sans">
+    <div className="p-3 md:p-6 max-w-5xl mx-auto space-y-6 font-sans pb-16">
       
       <div className="bg-white p-6 rounded-3xl shadow-sm border space-y-5">
         
         {/* Header Title & Badge */}
         <div className="flex justify-between items-center flex-wrap gap-2 border-b pb-4">
           <div>
-            <h2 className="text-xl font-black text-blue-950">Admission Form</h2>
-            <p className="text-xs text-gray-500">Register new student into the academy database</p>
+            <h2 className="text-xl font-black text-blue-950">
+              {editId ? '✏️ Edit Student Record' : 'Admission Form'}
+            </h2>
+            <p className="text-xs text-gray-500">
+              {editId ? 'Modify existing student details in database' : 'Register new student into the academy database'}
+            </p>
           </div>
 
           <span className="bg-slate-100 text-slate-800 border border-slate-300 text-xs font-mono font-extrabold px-3.5 py-1.5 rounded-full shadow-sm">
-            Auto Admission No: <b className="text-blue-900">{admissionNo || 'Loading...'}</b>
+            {editId ? 'Editing Admission No: ' : 'Auto Admission No: '}
+            <b className="text-blue-900">{admissionNo || 'Loading...'}</b>
           </span>
         </div>
 
@@ -249,7 +308,7 @@ export default function AdminAdmissionFormPage() {
 
         <form onSubmit={handleSubmit} className="space-y-5 text-xs">
           
-          {/* 🚀 PHOTO UPLOAD & AUTO COMPRESS SECTION */}
+          {/* PHOTO UPLOAD & AUTO COMPRESS SECTION */}
           <div className="p-4 bg-slate-50 border rounded-2xl flex items-center gap-4 flex-wrap">
             <div className="w-20 h-24 bg-white border-2 border-dashed border-slate-300 rounded-2xl flex items-center justify-center overflow-hidden shrink-0 shadow-inner">
               {studentPhoto ? (
@@ -283,20 +342,23 @@ export default function AdminAdmissionFormPage() {
               <label className="block font-bold text-gray-700 mb-1">Admission / Reg No</label>
               <input
                 type="text"
-                readOnly
-                className="w-full p-3 border rounded-2xl font-bold font-mono bg-slate-100 text-blue-950 outline-none cursor-not-allowed"
+                readOnly={!editId}
+                className={`w-full p-3 border rounded-2xl font-bold font-mono outline-none ${
+                  editId ? 'bg-slate-50 text-blue-950' : 'bg-slate-100 text-blue-950 cursor-not-allowed'
+                }`}
                 value={admissionNo}
+                onChange={(e) => setAdmissionNo(e.target.value)}
               />
             </div>
 
-            {/* Class Roll No (Auto) */}
+            {/* Class Roll No */}
             <div>
-              <label className="block font-bold text-gray-700 mb-1">Class Roll No (Auto)</label>
+              <label className="block font-bold text-gray-700 mb-1">Class Roll No</label>
               <input
                 type="number"
-                readOnly
-                className="w-full p-3 border rounded-2xl font-bold font-mono bg-slate-100 text-blue-950 outline-none cursor-not-allowed"
+                className="w-full p-3 border rounded-2xl font-bold font-mono bg-slate-50 text-blue-950 outline-none"
                 value={rollNo}
+                onChange={(e) => setRollNo(parseInt(e.target.value, 10) || 1)}
               />
             </div>
 
@@ -342,9 +404,9 @@ export default function AdminAdmissionFormPage() {
               </select>
             </div>
 
-            {/* Section (Auto) */}
+            {/* Section */}
             <div>
-              <label className="block font-bold text-gray-700 mb-1">Section (Auto)</label>
+              <label className="block font-bold text-gray-700 mb-1">Section</label>
               <input
                 type="text"
                 readOnly
@@ -420,7 +482,7 @@ export default function AdminAdmissionFormPage() {
             disabled={loading || compressing}
             className="w-full p-4 bg-blue-950 hover:bg-blue-900 text-white rounded-2xl font-black text-xs transition shadow-md mt-3"
           >
-            {loading ? 'Processing Admission...' : 'Submit Student Admission'}
+            {loading ? 'Processing...' : editId ? 'Update Student Record' : 'Submit Student Admission'}
           </button>
 
         </form>
@@ -428,5 +490,13 @@ export default function AdminAdmissionFormPage() {
       </div>
 
     </div>
+  );
+}
+
+export default function AdminAdmissionFormPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-xs font-bold text-gray-500">Loading Admission Form...</div>}>
+      <AdminAdmissionFormContent />
+    </Suspense>
   );
 }

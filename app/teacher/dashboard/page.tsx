@@ -127,11 +127,7 @@ export default function TeacherDashboardPage() {
         </h3>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3">
-          <button onClick={() => router.push('/teacher/attendance')} className="p-4 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-100 rounded-2xl flex flex-col items-center justify-center text-center space-y-1.5 transition">
-            <span className="text-2xl">📋</span>
-            <span className="text-xs font-bold text-emerald-950">Attendance</span>
-          </button>
-
+          
           <button onClick={() => router.push('/teacher/timetable')} className="p-4 bg-amber-50 hover:bg-amber-100/80 border border-amber-100 rounded-2xl flex flex-col items-center justify-center text-center space-y-1.5 transition">
             <span className="text-2xl">⏰</span>
             <span className="text-xs font-bold text-amber-950">Timetable</span>

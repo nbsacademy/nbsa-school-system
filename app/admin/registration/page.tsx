@@ -1,8 +1,13 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
-export default function AdminStaffRegistrationPage() {
+function AdminStaffRegistrationContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const editId = searchParams.get('id'); // URL سے سٹاف کی ID حاصل کرنا
+
   const [loading, setLoading] = useState(false);
   const [staffType, setStaffType] = useState<'Teaching Staff' | 'Admin Staff'>('Teaching Staff');
 
@@ -39,13 +44,13 @@ export default function AdminStaffRegistrationPage() {
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
   useEffect(() => {
-    fetchInitialData();
-  }, []);
+    initForm();
+  }, [editId]);
 
-  // Fetch Classes and Auto Reg No
-  const fetchInitialData = async () => {
+  const initForm = async () => {
     setLoading(true);
 
+    // Fetch Classes
     const { data: cData } = await supabase
       .from('classes')
       .select('*')
@@ -53,17 +58,53 @@ export default function AdminStaffRegistrationPage() {
 
     if (cData && cData.length > 0) {
       setClassesList(cData);
-      setSelectedClassId(cData[0].id);
-      setSelectedClassName(`${cData[0].class_name} (${cData[0].section_name || 'Section A'})`);
-      setSectionName(cData[0].section_name || 'Section A');
     }
 
-    await calculateNextStaffRegNo();
+    if (editId) {
+      // EDIT MODE: Fetch existing staff record
+      const { data: sf, error } = await supabase.from('staff').select('*').eq('id', editId).single();
+      if (sf && !error) {
+        setRegistrationNo(sf.registration_no || '');
+        setFullName(sf.full_name || '');
+        setFatherName(sf.father_name || '');
+        setCnic(sf.cnic || '');
+        setDob(sf.dob || '');
+        setPhone(sf.phone || '');
+        setWhatsapp(sf.whatsapp || sf.phone || '');
+        setRelativePhone(sf.relative_phone || '');
+        setEmail(sf.email || '');
+        setAddress(sf.address || '');
+        setEducation(sf.education || '');
+        setSalary(sf.basic_salary ? String(sf.basic_salary) : '');
+        setStaffPhoto(sf.photo_url || '');
+
+        const roleLower = (sf.role || '').toLowerCase();
+        if (roleLower.includes('teacher') || roleLower.includes('faculty') || roleLower.includes('lecturer')) {
+          setStaffType('Teaching Staff');
+          setSelectedClassName(sf.assigned_class || '');
+          setSectionName(sf.section_name || '');
+        } else {
+          setStaffType('Admin Staff');
+          setDesignation(sf.role || 'Administrator');
+        }
+      }
+    } else {
+      // NEW REGISTRATION MODE: Set defaults & auto reg no
+      if (cData && cData.length > 0) {
+        setSelectedClassId(cData[0].id);
+        setSelectedClassName(`${cData[0].class_name} (${cData[0].section_name || 'Section A'})`);
+        setSectionName(cData[0].section_name || 'Section A');
+      }
+      await calculateNextStaffRegNo();
+    }
+
     setLoading(false);
   };
 
-  // 🚀 SMART AUTO REGISTRATION NUMBER (Scans DB for Highest R-2026-xxx)
+  // 🚀 SMART AUTO REGISTRATION NUMBER (For New Entries Only)
   const calculateNextStaffRegNo = async () => {
+    if (editId) return;
+
     const { data: staffList } = await supabase.from('staff').select('registration_no');
 
     let maxNum = 0;
@@ -146,7 +187,7 @@ export default function AdminStaffRegistrationPage() {
     }
   };
 
-  // Submit Staff Registration Form (Mapped to Exact DB Column Names)
+  // Submit Staff Registration Form (Handles INSERT & UPDATE)
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAlert(null);
@@ -158,7 +199,6 @@ export default function AdminStaffRegistrationPage() {
 
     setLoading(true);
 
-    // Exact Payload Matching existing DB Columns
     const payload = {
       registration_no: registrationNo,
       full_name: fullName.trim(),
@@ -172,14 +212,23 @@ export default function AdminStaffRegistrationPage() {
       address: address.trim() || null,
       role: staffType === 'Teaching Staff' ? 'Teacher' : designation.trim() || 'Admin Staff',
       education: education.trim() || null,
-      basic_salary: salary ? parseFloat(salary) : 0, // Matches 'basic_salary' in DB
-      assigned_class: staffType === 'Teaching Staff' ? selectedClassName : null, // Matches 'assigned_class'
+      basic_salary: salary ? parseFloat(salary) : 0,
+      assigned_class: staffType === 'Teaching Staff' ? selectedClassName : null,
       section_name: staffType === 'Teaching Staff' ? sectionName : null,
       photo_url: staffPhoto || null,
       is_active: true,
     };
 
-    const { error } = await supabase.from('staff').insert([payload]);
+    let error;
+    if (editId) {
+      // UPDATE Existing Staff Record
+      const res = await supabase.from('staff').update(payload).eq('id', editId);
+      error = res.error;
+    } else {
+      // INSERT New Staff Record
+      const res = await supabase.from('staff').insert([payload]);
+      error = res.error;
+    }
 
     setLoading(false);
 
@@ -188,40 +237,53 @@ export default function AdminStaffRegistrationPage() {
     } else {
       setAlert({
         type: 'success',
-        msg: `Staff ${fullName} registered successfully with Reg No ${registrationNo}!`,
+        msg: editId
+          ? `Staff ${fullName} record updated successfully!`
+          : `Staff ${fullName} registered successfully with Reg No ${registrationNo}!`,
       });
 
-      // Reset Form Fields
-      setFullName('');
-      setFatherName('');
-      setCnic('');
-      setDob('');
-      setPhone('');
-      setWhatsapp('');
-      setRelativePhone('');
-      setEmail('');
-      setAddress('');
-      setEducation('');
-      setDesignation('Administrator');
-      setSubject('Computer Sci');
-      setSalary('');
-      setStaffPhoto('');
-      setPhotoSizeKb(null);
+      if (!editId) {
+        // Reset Form Fields
+        setFullName('');
+        setFatherName('');
+        setCnic('');
+        setDob('');
+        setPhone('');
+        setWhatsapp('');
+        setRelativePhone('');
+        setEmail('');
+        setAddress('');
+        setEducation('');
+        setDesignation('Administrator');
+        setSubject('Computer Sci');
+        setSalary('');
+        setStaffPhoto('');
+        setPhotoSizeKb(null);
 
-      await calculateNextStaffRegNo();
+        await calculateNextStaffRegNo();
+      } else {
+        // Redirect to Status Center after 1.5s
+        setTimeout(() => {
+          router.push('/admin/status-center');
+        }, 1500);
+      }
     }
   };
 
   return (
-    <div className="p-3 md:p-6 max-w-5xl mx-auto space-y-6 font-sans">
+    <div className="p-3 md:p-6 max-w-5xl mx-auto space-y-6 font-sans pb-16">
       
       <div className="bg-white p-6 rounded-3xl shadow-sm border space-y-6">
         
         {/* Header Title & Switcher */}
         <div className="flex justify-between items-center flex-wrap gap-3 border-b pb-4">
           <div>
-            <h2 className="text-xl font-black text-blue-950">Staff Registration Form</h2>
-            <p className="text-xs text-gray-500">Register Teaching or Admin Staff into system database</p>
+            <h2 className="text-xl font-black text-blue-950">
+              {editId ? '✏️ Edit Staff Record' : 'Staff Registration Form'}
+            </h2>
+            <p className="text-xs text-gray-500">
+              {editId ? 'Modify existing staff details in system database' : 'Register Teaching or Admin Staff into system database'}
+            </p>
           </div>
 
           <div className="bg-slate-100 p-1.5 rounded-2xl flex items-center gap-1 border">
@@ -258,7 +320,7 @@ export default function AdminStaffRegistrationPage() {
           </div>
         )}
 
-        {/* 📷 PHOTO UPLOAD & AUTO COMPRESS (< 100 KB) */}
+        {/* PHOTO UPLOAD & AUTO COMPRESS SECTION */}
         <div className="p-4 bg-slate-50 border rounded-2xl flex items-center gap-4 flex-wrap">
           <div className="w-20 h-24 bg-white border-2 border-dashed border-slate-300 rounded-2xl flex items-center justify-center overflow-hidden shrink-0 shadow-inner">
             {staffPhoto ? (
@@ -299,12 +361,15 @@ export default function AdminStaffRegistrationPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
               
               <div>
-                <label className="block font-bold text-gray-700 mb-1">Registration Serial No (Auto)</label>
+                <label className="block font-bold text-gray-700 mb-1">Registration Serial No</label>
                 <input
                   type="text"
-                  readOnly
-                  className="w-full p-3 border rounded-2xl font-bold font-mono bg-slate-100 text-blue-950 outline-none cursor-not-allowed"
+                  readOnly={!editId}
+                  className={`w-full p-3 border rounded-2xl font-bold font-mono outline-none ${
+                    editId ? 'bg-slate-50 text-blue-950' : 'bg-slate-100 text-blue-950 cursor-not-allowed'
+                  }`}
                   value={registrationNo || 'Loading...'}
+                  onChange={(e) => setRegistrationNo(e.target.value)}
                 />
               </div>
 
@@ -432,7 +497,7 @@ export default function AdminStaffRegistrationPage() {
                 </div>
 
                 <div>
-                  <label className="block font-bold text-gray-700 mb-1">Designation / Role (عہدہ)</label>
+                  <label className="block font-bold text-gray-700 mb-1">Designation / Role</label>
                   <input
                     type="text"
                     placeholder="e.g. Administrator, Accountant, Clerk"
@@ -443,7 +508,7 @@ export default function AdminStaffRegistrationPage() {
                 </div>
 
                 <div>
-                  <label className="block font-bold text-gray-700 mb-1">Basic Salary (سیلری)</label>
+                  <label className="block font-bold text-gray-700 mb-1">Basic Salary</label>
                   <input
                     type="number"
                     placeholder="e.g. 35000"
@@ -507,7 +572,7 @@ export default function AdminStaffRegistrationPage() {
                 </div>
 
                 <div>
-                  <label className="block font-bold text-gray-700 mb-1">Basic Salary (سیلری)</label>
+                  <label className="block font-bold text-gray-700 mb-1">Basic Salary</label>
                   <input
                     type="number"
                     placeholder="e.g. 45000"
@@ -526,7 +591,7 @@ export default function AdminStaffRegistrationPage() {
             disabled={loading || compressing}
             className="w-full p-4 bg-blue-950 hover:bg-blue-900 text-white rounded-2xl font-black text-xs transition shadow-md mt-4"
           >
-            {loading ? 'Processing Registration...' : `Submit ${staffType} Registration`}
+            {loading ? 'Processing...' : editId ? 'Update Staff Record' : `Submit ${staffType} Registration`}
           </button>
 
         </form>
@@ -534,5 +599,13 @@ export default function AdminStaffRegistrationPage() {
       </div>
 
     </div>
+  );
+}
+
+export default function AdminStaffRegistrationPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-xs font-bold text-gray-500">Loading Staff Registration Form...</div>}>
+      <AdminStaffRegistrationContent />
+    </Suspense>
   );
 }
