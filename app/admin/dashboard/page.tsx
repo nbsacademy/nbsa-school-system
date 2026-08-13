@@ -5,7 +5,7 @@ import Link from 'next/link';
 export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState<'admin' | 'accounts'>('admin');
 
-  // Admin Section Modules (Ordered as requested)
+  // Admin Section Modules (With Student Result View Added)
   const adminModules = [
     {
       title: 'Staff Attendance',
@@ -18,6 +18,12 @@ export default function DashboardPage() {
       desc: 'DAILY STUDENT ATTENDANCE',
       icon: '🎓',
       link: '/admin/student_attendance',
+    },
+    {
+      title: 'Student Result View',
+      desc: 'VIEW CLASS TEST RESULTS',
+      icon: '📜',
+      link: '/admin/results',
     },
     {
       title: 'Status & Reports',
