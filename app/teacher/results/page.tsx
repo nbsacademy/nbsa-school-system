@@ -20,6 +20,10 @@ export default function TeacherResultAnalyticsPage() {
   const [studentsList, setStudentsList] = useState<any[]>([]);
   const [marksMap, setMarksMap] = useState<{ [studentId: string]: string }>({});
 
+  // Duplicate Check & Lock State
+  const [isDuplicateTest, setIsDuplicateTest] = useState(false);
+  const [existingTestId, setExistingTestId] = useState<string | null>(null);
+
   // Individual Progress Analytics State
   const [selectedStudentForAnalytics, setSelectedStudentForAnalytics] = useState('');
   const [studentHistory, setStudentHistory] = useState<any[]>([]);
@@ -28,7 +32,7 @@ export default function TeacherResultAnalyticsPage() {
   const [classConsolidatedSubjects, setClassConsolidatedSubjects] = useState<any[]>([]);
   const [classConsolidatedData, setClassConsolidatedData] = useState<any[]>([]);
 
-  // Beautiful Popup Modal State (Replaces browser alerts)
+  // Custom Popup Notification State
   const [popup, setPopup] = useState<{
     show: boolean;
     type: 'success' | 'error';
@@ -44,6 +48,13 @@ export default function TeacherResultAnalyticsPage() {
   useEffect(() => {
     fetchTeacherAssignments();
   }, []);
+
+  // Check if subject test already exists for this class & title
+  useEffect(() => {
+    if (selectedClassId && selectedSubject && testTitle) {
+      checkDuplicateSubjectTest(selectedClassId, selectedSubject, testTitle);
+    }
+  }, [selectedClassId, selectedSubject, testTitle]);
 
   const fetchTeacherAssignments = async () => {
     setLoading(true);
@@ -76,6 +87,27 @@ export default function TeacherResultAnalyticsPage() {
     }
 
     setLoading(false);
+  };
+
+  // Check if test for this subject is already saved
+  const checkDuplicateSubjectTest = async (classId: string, subject: string, title: string) => {
+    if (!classId || !subject || !title) return;
+
+    const { data } = await supabase
+      .from('student_tests')
+      .select('id')
+      .eq('class_id', classId)
+      .eq('subject_name', subject)
+      .eq('test_title', title.trim())
+      .maybeSingle();
+
+    if (data) {
+      setIsDuplicateTest(true);
+      setExistingTestId(data.id);
+    } else {
+      setIsDuplicateTest(false);
+      setExistingTestId(null);
+    }
   };
 
   const loadClassStudents = async (classId: string) => {
@@ -133,6 +165,11 @@ export default function TeacherResultAnalyticsPage() {
 
     setClassConsolidatedSubjects(tests);
 
+    const selectedClassObj = classesList.find((c) => c.id === classId);
+    const isGirlClass =
+      selectedClassObj?.class_name?.toLowerCase().includes('girl') ||
+      selectedClassObj?.section_name?.toLowerCase().includes('girl');
+
     const rows = currentStudents.map((st) => {
       let grandObtained = 0;
       let grandTotal = 0;
@@ -142,7 +179,7 @@ export default function TeacherResultAnalyticsPage() {
         const markObj = allMarks?.find((m) => m.test_id === t.id && m.student_id === st.id);
         if (markObj) {
           const valStr = String(markObj.obtained_marks || '').trim();
-          if (valStr.toUpperCase() === 'A' || valStr === '0' && markObj.obtained_marks === 0) {
+          if (valStr.toUpperCase() === 'A' || (valStr === '0' && markObj.obtained_marks === 0)) {
             subjScores[t.id] = 'A';
             grandTotal += parseFloat(t.total_marks || 0);
           } else {
@@ -158,11 +195,15 @@ export default function TeacherResultAnalyticsPage() {
 
       const percentage = grandTotal > 0 ? ((grandObtained / grandTotal) * 100).toFixed(2) : '0.00';
 
+      // Fix: Gender Detection for S/O vs D/O
+      const isGirl = st.gender?.toLowerCase() === 'female' || isGirlClass;
+
       return {
         studentId: st.id,
         rollNo: st.roll_no || '-',
         name: st.full_name,
         fatherName: st.father_name || '',
+        parentPrefix: isGirl ? 'D/O' : 'S/O',
         subjScores,
         grandObtained,
         grandTotal,
@@ -196,7 +237,7 @@ export default function TeacherResultAnalyticsPage() {
     setMarksMap((prev) => ({ ...prev, [studentId]: val }));
   };
 
-  // Save Test Results with Numeric Compatibility & Beautiful Popup
+  // SAVE RESULT WITH STRICT VALIDATION & DUPLICATE BLOCKING
   const handleSaveResult = async () => {
     if (!selectedClassId || !selectedSubject || studentsList.length === 0) {
       setPopup({
@@ -204,6 +245,33 @@ export default function TeacherResultAnalyticsPage() {
         type: 'error',
         title: 'Action Required',
         message: 'Please select class, subject and ensure students are available.',
+      });
+      return;
+    }
+
+    // 1. STRICT VALIDATION: Check if ALL student fields are filled
+    const unfilledStudents = studentsList.filter((st) => {
+      const val = (marksMap[st.id] ?? '').toString().trim();
+      return val === '';
+    });
+
+    if (unfilledStudents.length > 0) {
+      setPopup({
+        show: true,
+        type: 'error',
+        title: 'Incomplete Marks Entry',
+        message: `Please fill marks for all ${studentsList.length} students! Type 'A' or 'a' for absent students. (${unfilledStudents.length} remaining)`,
+      });
+      return;
+    }
+
+    // 2. DUPLICATE CHECK: Prevent saving if already saved
+    if (isDuplicateTest) {
+      setPopup({
+        show: true,
+        type: 'error',
+        title: 'Subject Result Already Saved!',
+        message: `Results for ${selectedSubject} (${testTitle}) have ALREADY been saved for this class! Delete the existing result first if you need to modify it.`,
       });
       return;
     }
@@ -235,7 +303,6 @@ export default function TeacherResultAnalyticsPage() {
       return;
     }
 
-    // Convert 'A' to 0 for numeric table column to avoid syntax error
     const marksPayload = studentsList.map((st) => {
       const rawVal = (marksMap[st.id] || '').trim();
       const isAbsent = rawVal.toUpperCase() === 'A';
@@ -264,7 +331,40 @@ export default function TeacherResultAnalyticsPage() {
         title: 'Result Saved Successfully!',
         message: 'Class test results saved & official sheet updated successfully.',
       });
+      setIsDuplicateTest(true);
+      setExistingTestId(testData.id);
       fetchConsolidatedClassSheet(selectedClassId, studentsList);
+    }
+  };
+
+  // Delete/Reverse Test Result if saved incorrectly
+  const handleDeleteSubjectTest = async (testId: string, subjectName: string) => {
+    if (!confirm(`Are you sure you want to delete/reverse the test result for ${subjectName}?`)) return;
+
+    setLoading(true);
+
+    await supabase.from('student_marks').delete().eq('test_id', testId);
+    const { error } = await supabase.from('student_tests').delete().eq('id', testId);
+
+    setLoading(false);
+
+    if (!error) {
+      setPopup({
+        show: true,
+        type: 'success',
+        title: 'Test Result Deleted',
+        message: `Test result for ${subjectName} removed from database. You can now re-enter new marks.`,
+      });
+
+      fetchConsolidatedClassSheet(selectedClassId, studentsList);
+      checkDuplicateSubjectTest(selectedClassId, selectedSubject, testTitle);
+    } else {
+      setPopup({
+        show: true,
+        type: 'error',
+        title: 'Delete Failed',
+        message: error.message,
+      });
     }
   };
 
@@ -286,10 +386,17 @@ export default function TeacherResultAnalyticsPage() {
 
   const selectedClassObj = classesList.find((c) => c.id === selectedClassId);
 
+  // Sorted Students for Class Ranking Graph
+  const sortedStudentsForGraph = [...studentsList].sort((a, b) => {
+    const valA = (marksMap[a.id] || '').toUpperCase() === 'A' ? 0 : parseFloat(marksMap[a.id]) || 0;
+    const valB = (marksMap[b.id] || '').toUpperCase() === 'A' ? 0 : parseFloat(marksMap[b.id]) || 0;
+    return valB - valA;
+  });
+
   return (
     <div className="p-3 md:p-6 max-w-6xl mx-auto space-y-6 font-sans pb-20">
       
-      {/* 🚀 BEAUTIFUL CUSTOM POPUP MODAL */}
+      {/* CUSTOM POPUP MODAL */}
       {popup.show && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn">
           <div className={`bg-white rounded-3xl p-6 shadow-2xl max-w-md w-full border-t-8 text-center space-y-4 ${
@@ -322,9 +429,17 @@ export default function TeacherResultAnalyticsPage() {
 
       {/* 1. TOP HEADER & CONTROLS */}
       <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4 print:hidden">
-        <div className="border-b pb-2">
-          <h2 className="text-xl font-black text-blue-950">Subject Result & Performance Analytics</h2>
-          <p className="text-xs text-gray-500">Enter marks (or 'A' for absent) to auto-generate class consolidated sheets</p>
+        <div className="border-b pb-2 flex justify-between items-center flex-wrap gap-2">
+          <div>
+            <h2 className="text-xl font-black text-blue-950">Subject Result & Performance Analytics</h2>
+            <p className="text-xs text-gray-500">Enter marks (or 'A' for absent) to auto-generate class consolidated sheets</p>
+          </div>
+
+          {isDuplicateTest && (
+            <span className="bg-rose-100 text-rose-800 border border-rose-300 font-extrabold text-xs px-3 py-1 rounded-full flex items-center gap-1 shadow-sm">
+              🔒 Subject Result Saved & Locked
+            </span>
+          )}
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
@@ -358,13 +473,136 @@ export default function TeacherResultAnalyticsPage() {
         </div>
       </div>
 
-      {/* 2. MARKS ENTRY TABLE (WITH GRADE & PERCENTAGE BADGE) */}
+      {/* 2. GRAPH 1: CLASS RANKING BAR GRAPH (HIGH TO LOW) */}
+      <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4 print:hidden">
+        <div className="flex justify-between items-center border-b pb-2">
+          <h3 className="text-xs font-black text-gray-600 uppercase tracking-wider flex items-center gap-1.5">
+            <span>📊</span> LIVE MARKS PERFORMANCE BAR GRAPH (RANKED: HIGH TO LOW)
+          </h3>
+          <span className="text-[11px] font-bold text-blue-900 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200">
+            {selectedSubject} | {testTitle}
+          </span>
+        </div>
+
+        {sortedStudentsForGraph.length > 0 ? (
+          <div className="pt-6 pb-2 px-2 flex items-end justify-around gap-2 h-64 overflow-x-auto border-b">
+            {sortedStudentsForGraph.map((st, idx) => {
+              const raw = (marksMap[st.id] || '').toUpperCase();
+              const isAbsent = raw === 'A';
+              const obt = isAbsent ? 0 : parseFloat(raw) || 0;
+              const pct = Math.min(100, Math.round((obt / totalMarks) * 100));
+
+              let barBg = 'bg-emerald-500';
+              if (isAbsent || pct < 40) barBg = 'bg-rose-500';
+              else if (pct < 70) barBg = 'bg-blue-500';
+
+              return (
+                <div key={st.id} className="flex flex-col items-center flex-1 min-w-[50px] max-w-[80px] h-full justify-end group">
+                  <span className="text-[11px] font-black font-mono mb-1 text-slate-800">
+                    {isAbsent ? 'A' : `${obt}/${totalMarks}`}
+                  </span>
+
+                  <div
+                    style={{ height: `${Math.max(12, pct)}%` }}
+                    className={`w-full rounded-t-xl ${barBg} transition-all duration-500 shadow-md flex items-center justify-center text-[10px] font-extrabold text-white`}
+                  >
+                    {isAbsent ? '0%' : `${pct}%`}
+                  </div>
+
+                  <span className="text-[11px] font-bold text-slate-700 truncate w-full text-center mt-2 group-hover:text-blue-900">
+                    #{idx + 1} {st.full_name.split(' ')[0]}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-center py-10 text-xs text-gray-400 font-medium">
+            No student marks data available to display ranking graph.
+          </div>
+        )}
+      </div>
+
+      {/* 3. GRAPH 2: INDIVIDUAL STUDENT PROGRESS TREND (UP / DOWN GRAPH) */}
+      <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4 print:hidden">
+        <div className="flex justify-between items-center flex-wrap gap-2 border-b pb-3">
+          <div>
+            <h3 className="text-xs font-black text-gray-600 uppercase tracking-wider flex items-center gap-1.5">
+              <span>📈</span> INDIVIDUAL STUDENT PROGRESS GRAPH (PAST vs PRESENT TREND)
+            </h3>
+            <p className="text-[11px] text-gray-500">Track if student performance is improving or declining over past tests</p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-bold text-gray-700">Select Student:</label>
+            <select
+              className="p-2 border rounded-xl font-bold text-xs bg-slate-50 text-blue-900 outline-none"
+              value={selectedStudentForAnalytics}
+              onChange={(e) => {
+                setSelectedStudentForAnalytics(e.target.value);
+                fetchStudentProgressHistory(e.target.value);
+              }}
+            >
+              {studentsList.map((st) => (
+                <option key={st.id} value={st.id}>
+                  {st.roll_no ? `Roll ${st.roll_no} - ` : ''}{st.full_name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {studentHistory.length > 0 ? (
+          <div className="p-4 bg-slate-50 rounded-2xl border space-y-3">
+            <div className="flex justify-between items-center text-xs">
+              <span className="font-bold text-gray-600">Past Tests Performance Over Time</span>
+              <span className="font-extrabold text-blue-900">
+                Total Tests Recorded: <b className="font-mono text-sm">{studentHistory.length}</b>
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3 pt-2">
+              {studentHistory.map((h, i) => {
+                const tMax = h.student_tests?.total_marks || 100;
+                const isAbsent = String(h.obtained_marks).toUpperCase() === 'A';
+                const obt = isAbsent ? 0 : parseFloat(h.obtained_marks) || 0;
+                const p = Math.round((obt / tMax) * 100);
+
+                const prevObt = i > 0 ? (String(studentHistory[i - 1].obtained_marks).toUpperCase() === 'A' ? 0 : parseFloat(studentHistory[i - 1].obtained_marks) || 0) : obt;
+                const isUp = obt >= prevObt;
+
+                return (
+                  <div key={i} className="bg-white p-3 rounded-xl border text-center shadow-sm space-y-1">
+                    <span className="text-[10px] font-bold text-gray-400 block truncate">
+                      {h.student_tests?.test_title || 'Test'}
+                    </span>
+                    <b className="text-sm font-black font-mono text-blue-950 block">
+                      {isAbsent ? 'ABSENT' : `${obt}/${tMax}`}
+                    </b>
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full inline-block ${
+                      isUp ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                    }`}>
+                      {isUp ? '📈 Up' : '📉 Down'} ({p}%)
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="text-center py-6 text-xs text-gray-400 font-medium">
+            Select a student to view their previous test progress trend.
+          </div>
+        )}
+      </div>
+
+      {/* 4. MARKS ENTRY TABLE (ALL FIELDS REQUIRED) */}
       <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4 print:hidden">
         <div className="flex justify-between items-center border-b pb-3">
           <h3 className="text-xs font-black text-blue-950 uppercase tracking-wider">
             STUDENT MARKS ENTRY ({studentsList.length} STUDENTS)
           </h3>
-          <span className="text-xs text-gray-500 font-bold">Type Number or <b>'A'</b> for Absent</span>
+          <span className="text-xs text-rose-600 font-bold">* All Student Fields Are Required (Type Marks or 'A')</span>
         </div>
 
         <div className="space-y-2 max-h-96 overflow-y-auto">
@@ -391,17 +629,20 @@ export default function TeacherResultAnalyticsPage() {
                   </span>
                   <div>
                     <h4 className="font-extrabold text-blue-950 text-sm">{st.full_name}</h4>
-                    <p className="text-[11px] text-gray-500 font-medium">S/O: {st.father_name || '-'}</p>
+                    <p className="text-[11px] text-gray-500 font-medium">
+                      {st.gender?.toLowerCase() === 'female' || selectedClassObj?.class_name?.toLowerCase().includes('girl') ? 'D/O' : 'S/O'}: {st.father_name || '-'}
+                    </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-3">
                   <div>
-                    <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Obtained / 'A'</label>
+                    <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Obtained / 'A' *</label>
                     <input
                       type="text"
                       placeholder="Marks or A"
-                      className="w-28 p-2 border rounded-xl font-bold font-mono text-center text-sm bg-white outline-none focus:border-blue-950 text-blue-950 uppercase"
+                      disabled={isDuplicateTest}
+                      className="w-28 p-2 border rounded-xl font-bold font-mono text-center text-sm bg-white outline-none focus:border-blue-950 text-blue-950 uppercase disabled:opacity-50"
                       value={marksMap[st.id] ?? ''}
                       onChange={(e) => handleMarksChange(st.id, e.target.value)}
                     />
@@ -419,18 +660,43 @@ export default function TeacherResultAnalyticsPage() {
           })}
         </div>
 
-        <button
-          type="button"
-          onClick={handleSaveResult}
-          disabled={loading || studentsList.length === 0}
-          className="w-full p-3.5 bg-blue-950 hover:bg-blue-900 text-white rounded-2xl font-black text-xs transition shadow-md flex items-center justify-center gap-2"
-        >
-          <span>💾</span>
-          <span>Save Result & Update Consolidated Result Sheet</span>
-        </button>
+        {/* SAVE OR LOCKED BUTTON */}
+        {isDuplicateTest ? (
+          <div className="space-y-2">
+            <button
+              type="button"
+              disabled
+              className="w-full p-3.5 bg-slate-200 text-slate-500 rounded-2xl font-black text-xs border border-slate-300 cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              <span>🔒</span>
+              <span>Result Saved & Locked for {selectedSubject} ({testTitle})</span>
+            </button>
+
+            {existingTestId && (
+              <button
+                type="button"
+                onClick={() => handleDeleteSubjectTest(existingTestId, selectedSubject)}
+                className="w-full p-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl font-bold text-xs border border-rose-200 transition"
+              >
+                🗑️ Delete Existing Result Entry to Re-enter
+              </button>
+            )}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={handleSaveResult}
+            disabled={loading || studentsList.length === 0}
+            className="w-full p-3.5 bg-blue-950 hover:bg-blue-900 text-white rounded-2xl font-black text-xs transition shadow-md flex items-center justify-center gap-2"
+          >
+            <span>💾</span>
+            <span>Save Result & Update Consolidated Result Sheet</span>
+          </button>
+        )}
+
       </div>
 
-      {/* 3. OFFICIAL CONSOLIDATED CLASS RESULT SHEET */}
+      {/* 5. OFFICIAL CONSOLIDATED CLASS RESULT SHEET */}
       <div className="bg-white p-6 rounded-3xl shadow-sm border space-y-4 print:p-0 print:border-none print:shadow-none">
         
         <div className="flex justify-between items-center border-b pb-3 print:hidden">
@@ -438,7 +704,7 @@ export default function TeacherResultAnalyticsPage() {
             <h3 className="text-sm font-black text-blue-950 uppercase tracking-wider">
               🏛️ Official Consolidated Result Sheet
             </h3>
-            <p className="text-xs text-gray-500">Auto-generated format matching academy standard</p>
+            <p className="text-xs text-gray-500 font-medium">Auto-generated format matching academy standard</p>
           </div>
 
           <div className="flex gap-2">
@@ -477,8 +743,18 @@ export default function TeacherResultAnalyticsPage() {
                   <th className="border border-black p-1.5 text-left min-w-[200px]">Students with Parentage</th>
                   
                   {classConsolidatedSubjects.map((sub) => (
-                    <th key={sub.id} className="border border-black p-1">
-                      {sub.subject_name.slice(0, 4)}
+                    <th key={sub.id} className="border border-black p-1 relative group">
+                      <div className="flex items-center justify-between gap-1 px-1">
+                        <span>{sub.subject_name.slice(0, 4)}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSubjectTest(sub.id, sub.subject_name)}
+                          className="text-[9px] text-rose-700 hover:text-rose-900 print:hidden font-mono font-bold"
+                          title="Delete this subject test result"
+                        >
+                          ✕
+                        </button>
+                      </div>
                       <div className="text-[9px] font-normal">({sub.total_marks})</div>
                     </th>
                   ))}
@@ -494,7 +770,7 @@ export default function TeacherResultAnalyticsPage() {
                     <tr key={row.studentId} className="border-b border-black hover:bg-gray-50 font-mono">
                       <td className="border border-black p-1 font-bold">{idx + 1}</td>
                       <td className="border border-black p-1 text-left font-sans font-bold uppercase">
-                        {row.name} {row.fatherName ? `D/O ${row.fatherName}` : ''}
+                        {row.name} {row.fatherName ? `${row.parentPrefix} ${row.fatherName}` : ''}
                       </td>
 
                       {classConsolidatedSubjects.map((sub) => {
