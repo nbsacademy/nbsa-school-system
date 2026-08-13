@@ -1,9 +1,10 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 
 export default function TeacherResultAnalyticsPage() {
   const [loading, setLoading] = useState(false);
+  const printRef = useRef<HTMLDivElement>(null);
 
   // Live Database Dropdown States
   const [classesList, setClassesList] = useState<any[]>([]);
@@ -12,16 +13,20 @@ export default function TeacherResultAnalyticsPage() {
   const [selectedSubject, setSelectedSubject] = useState('');
 
   // Test Header Information
-  const [testTitle, setTestTitle] = useState('Monthly Test - August 2026');
+  const [testTitle, setTestTitle] = useState('Weekly Test: W5');
   const [totalMarks, setTotalMarks] = useState<number>(100);
 
   // Students and Marks Data
   const [studentsList, setStudentsList] = useState<any[]>([]);
-  const [marksMap, setMarksMap] = useState<{ [studentId: string]: number }>({});
+  const [marksMap, setMarksMap] = useState<{ [studentId: string]: string }>({});
 
   // Individual Progress Analytics State
   const [selectedStudentForAnalytics, setSelectedStudentForAnalytics] = useState('');
   const [studentHistory, setStudentHistory] = useState<any[]>([]);
+
+  // Consolidated Class Sheet Data (DB Fetched)
+  const [classConsolidatedSubjects, setClassConsolidatedSubjects] = useState<any[]>([]);
+  const [classConsolidatedData, setClassConsolidatedData] = useState<any[]>([]);
 
   // Alert State
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
@@ -30,19 +35,17 @@ export default function TeacherResultAnalyticsPage() {
     fetchTeacherAssignments();
   }, []);
 
-  // 1. Fetch Assigned Classes & Subjects for Logged In Teacher
+  // 1. Fetch Assigned Classes & Subjects for Teacher
   const fetchTeacherAssignments = async () => {
     setLoading(true);
 
-    // Fetch All Active Classes
     const { data: cData } = await supabase.from('classes').select('*').order('class_name', { ascending: true });
     if (cData && cData.length > 0) {
       setClassesList(cData);
       setSelectedClassId(cData[0].id);
     }
 
-    // Fetch Timetables/Subjects assigned to this teacher
-    const storedTeacherId = localStorage.getItem('user_id');
+    const storedTeacherId = typeof window !== 'undefined' ? localStorage.getItem('user_id') : null;
     let subjects = ['Physics', 'Chemistry', 'Mathematics', 'English', 'Biology', 'Urdu', 'Computer Sci'];
 
     if (storedTeacherId) {
@@ -52,15 +55,13 @@ export default function TeacherResultAnalyticsPage() {
         .eq('teacher_id', storedTeacherId);
 
       if (tData && tData.length > 0) {
-        const uniqueSubjs = Array.from(new Set(tData.map((t) => t.subject_name)));
-        subjects = uniqueSubjs;
+        subjects = Array.from(new Set(tData.map((t) => t.subject_name)));
       }
     }
 
     setSubjectList(subjects);
     if (subjects.length > 0) setSelectedSubject(subjects[0]);
 
-    // Load Students for Default Selected Class
     if (cData && cData.length > 0) {
       await loadClassStudents(cData[0].id);
     }
@@ -68,7 +69,7 @@ export default function TeacherResultAnalyticsPage() {
     setLoading(false);
   };
 
-  // 2. Load Class Students Sorted STRICTLY by Roll Number
+  // 2. Load Students & Existing Tests Sheet
   const loadClassStudents = async (classId: string) => {
     if (!classId) return;
 
@@ -84,10 +85,10 @@ export default function TeacherResultAnalyticsPage() {
     const currentStudents = stData || [];
     setStudentsList(currentStudents);
 
-    // Default 0 marks for all students
-    const initialMarks: { [key: string]: number } = {};
+    // Initial empty/clear marks map (No default '0')
+    const initialMarks: { [key: string]: string } = {};
     currentStudents.forEach((st) => {
-      initialMarks[st.id] = 0;
+      initialMarks[st.id] = '';
     });
     setMarksMap(initialMarks);
 
@@ -98,19 +99,102 @@ export default function TeacherResultAnalyticsPage() {
       setStudentHistory([]);
     }
 
+    // Load Consolidated Class Result Sheet for tests that actually exist
+    await fetchConsolidatedClassSheet(classId, currentStudents);
+
     setLoading(false);
   };
 
-  // Handle Class Selection Change
+  // Load ONLY subjects with actual entered test results for this class
+  const fetchConsolidatedClassSheet = async (classId: string, currentStudents: any[]) => {
+    if (!classId || currentStudents.length === 0) return;
+
+    // Fetch tests created for this class
+    const { data: tests } = await supabase
+      .from('student_tests')
+      .select('*')
+      .eq('class_id', classId)
+      .order('created_at', { ascending: true });
+
+    if (!tests || tests.length === 0) {
+      setClassConsolidatedSubjects([]);
+      setClassConsolidatedData([]);
+      return;
+    }
+
+    const testIds = tests.map((t) => t.id);
+    const { data: allMarks } = await supabase
+      .from('student_marks')
+      .select('*')
+      .in('test_id', testIds);
+
+    // Map Tests List
+    setClassConsolidatedSubjects(tests);
+
+    // Map Student-wise Consolidated Scores
+    const rows = currentStudents.map((st) => {
+      let grandObtained = 0;
+      let grandTotal = 0;
+      const subjScores: { [testId: string]: string } = {};
+
+      tests.forEach((t) => {
+        const markObj = allMarks?.find((m) => m.test_id === t.id && m.student_id === st.id);
+        if (markObj) {
+          const valStr = String(markObj.obtained_marks || '').trim();
+          if (valStr.toUpperCase() === 'A' || valStr.toUpperCase() === 'ABSENT') {
+            subjScores[t.id] = 'A';
+            grandTotal += parseFloat(t.total_marks || 0);
+          } else {
+            const num = parseFloat(valStr) || 0;
+            subjScores[t.id] = String(num);
+            grandObtained += num;
+            grandTotal += parseFloat(t.total_marks || 0);
+          }
+        } else {
+          subjScores[t.id] = '-';
+        }
+      });
+
+      const percentage = grandTotal > 0 ? ((grandObtained / grandTotal) * 100).toFixed(2) : '0.00';
+
+      return {
+        studentId: st.id,
+        rollNo: st.roll_no || '-',
+        name: st.full_name,
+        fatherName: st.father_name || '',
+        subjScores,
+        grandObtained,
+        grandTotal,
+        percentage: parseFloat(percentage),
+        position: '',
+      };
+    });
+
+    // Calculate Positions (1st, 2nd, 3rd)
+    const sorted = [...rows].sort((a, b) => b.grandObtained - a.grandObtained);
+    sorted.forEach((row, idx) => {
+      if (row.grandObtained > 0) {
+        if (idx === 0) row.position = '1st';
+        else if (idx === 1) row.position = '2nd';
+        else if (idx === 2) row.position = '3rd';
+      }
+    });
+
+    setClassConsolidatedData(rows);
+  };
+
   const handleClassChange = (newClassId: string) => {
     setSelectedClassId(newClassId);
     loadClassStudents(newClassId);
   };
 
-  // Handle Obtained Marks Input Change
+  // Allows Typing Numbers or 'A' / 'a' (Absent) without annoying '0'
   const handleMarksChange = (studentId: string, val: string) => {
-    const num = Math.min(totalMarks, Math.max(0, parseFloat(val) || 0));
-    setMarksMap((prev) => ({ ...prev, [studentId]: num }));
+    if (val.toUpperCase() === 'A') {
+      setMarksMap((prev) => ({ ...prev, [studentId]: 'A' }));
+      return;
+    }
+    setMarksMap((prev) => ({ ...prev, [studentId]: val }));
   };
 
   // Save Test Results to Supabase
@@ -123,14 +207,13 @@ export default function TeacherResultAnalyticsPage() {
     setLoading(true);
     setAlert(null);
 
-    // 1. Insert/Create Test Record
     const { data: testData, error: testErr } = await supabase
       .from('student_tests')
       .insert([
         {
           class_id: selectedClassId,
           subject_name: selectedSubject,
-          test_title: testTitle.trim() || 'Monthly Test',
+          test_title: testTitle.trim() || 'Weekly Test',
           total_marks: totalMarks,
           test_date: new Date().toISOString().split('T')[0],
         },
@@ -144,12 +227,14 @@ export default function TeacherResultAnalyticsPage() {
       return;
     }
 
-    // 2. Insert Marks Records
-    const marksPayload = studentsList.map((st) => ({
-      test_id: testData.id,
-      student_id: st.id,
-      obtained_marks: marksMap[st.id] || 0,
-    }));
+    const marksPayload = studentsList.map((st) => {
+      const rawVal = (marksMap[st.id] || '').trim();
+      return {
+        test_id: testData.id,
+        student_id: st.id,
+        obtained_marks: rawVal.toUpperCase() === 'A' ? 'A' : (parseFloat(rawVal) || 0).toString(),
+      };
+    });
 
     const { error: marksErr } = await supabase.from('student_marks').upsert(marksPayload);
 
@@ -158,14 +243,11 @@ export default function TeacherResultAnalyticsPage() {
     if (marksErr) {
       setAlert({ type: 'error', msg: marksErr.message });
     } else {
-      setAlert({ type: 'success', msg: 'Class Test Results Saved & Performance Analytics Updated Successfully!' });
-      if (selectedStudentForAnalytics) {
-        fetchStudentProgressHistory(selectedStudentForAnalytics);
-      }
+      setAlert({ type: 'success', msg: 'Class Test Results Saved & Official Sheet Updated!' });
+      fetchConsolidatedClassSheet(selectedClassId, studentsList);
     }
   };
 
-  // Fetch Individual Student's Test History for Trend Graph
   const fetchStudentProgressHistory = async (studentId: string) => {
     if (!studentId) return;
 
@@ -175,317 +257,223 @@ export default function TeacherResultAnalyticsPage() {
       .eq('student_id', studentId)
       .order('created_at', { ascending: true });
 
-    if (data) {
-      setStudentHistory(data);
-    }
+    if (data) setStudentHistory(data);
   };
 
-  // 3. SORT STUDENTS BY MARKS (High to Low Order for Ranking Graph)
-  const sortedStudentsForGraph = [...studentsList].sort((a, b) => {
-    const markA = marksMap[a.id] || 0;
-    const markB = marksMap[b.id] || 0;
-    return markB - markA; // Descending Order (High to Low)
-  });
+  const handlePrintSheet = () => {
+    window.print();
+  };
+
+  const selectedClassObj = classesList.find((c) => c.id === selectedClassId);
 
   return (
-    <div className="p-3 md:p-6 max-w-6xl mx-auto space-y-6 font-sans">
+    <div className="p-3 md:p-6 max-w-6xl mx-auto space-y-6 font-sans pb-20">
       
-      {/* 1. TOP HEADER & ASSIGNED SELECTION CONTROLS */}
-      <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4">
-        
-        <div className="flex justify-between items-center flex-wrap gap-2 border-b pb-3">
-          <div>
-            <h2 className="text-xl font-black text-blue-950">
-              Subject Result & Performance Analytics
-            </h2>
-            <p className="text-xs text-gray-500">
-              Enter test marks, generate auto grades and view live performance graphs
-            </p>
-          </div>
-
-          <button
-            onClick={() => window.print()}
-            className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold px-4 py-2 rounded-xl transition shadow-sm border flex items-center gap-1.5"
-          >
-            <span>🖨️</span> Print Result Sheet
-          </button>
+      {/* 1. TOP HEADER & CONTROLS */}
+      <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4 print:hidden">
+        <div className="border-b pb-2">
+          <h2 className="text-xl font-black text-blue-950">Subject Result & Performance Analytics</h2>
+          <p className="text-xs text-gray-500">Enter marks (or 'A' for absent) to auto-generate class consolidated sheets</p>
         </div>
 
         {alert && (
-          <div
-            className={`p-3 rounded-2xl text-xs font-bold border ${
-              alert.type === 'success'
-                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                : 'bg-rose-50 text-rose-800 border-rose-200'
-            }`}
-          >
+          <div className={`p-3 rounded-2xl text-xs font-bold border ${alert.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
             {alert.type === 'error' ? '⚠️ ' : '✓ '} {alert.msg}
           </div>
         )}
 
-        {/* Assigned Class, Subject & Test Title Fields */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-          
           <div>
             <label className="block font-bold text-gray-700 mb-1">Select Class</label>
-            <select
-              className="w-full p-2.5 border rounded-xl font-bold bg-slate-50 text-blue-900 outline-none"
-              value={selectedClassId}
-              onChange={(e) => handleClassChange(e.target.value)}
-            >
+            <select className="w-full p-2.5 border rounded-xl font-bold bg-slate-50 text-blue-950 outline-none" value={selectedClassId} onChange={(e) => handleClassChange(e.target.value)}>
               {classesList.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.class_name} ({c.section_name || 'Section A'})
-                </option>
+                <option key={c.id} value={c.id}>{c.class_name} ({c.section_name || 'Section A'})</option>
               ))}
             </select>
           </div>
 
           <div>
             <label className="block font-bold text-gray-700 mb-1">Assigned Subject</label>
-            <select
-              className="w-full p-2.5 border rounded-xl font-bold bg-slate-50 text-blue-900 outline-none"
-              value={selectedSubject}
-              onChange={(e) => setSelectedSubject(e.target.value)}
-            >
+            <select className="w-full p-2.5 border rounded-xl font-bold bg-slate-50 text-blue-950 outline-none" value={selectedSubject} onChange={(e) => setSelectedSubject(e.target.value)}>
               {subjectList.map((subj, idx) => (
-                <option key={idx} value={subj}>
-                  {subj}
-                </option>
+                <option key={idx} value={subj}>{subj}</option>
               ))}
             </select>
           </div>
 
           <div>
             <label className="block font-bold text-gray-700 mb-1">Test Name / Title</label>
-            <input
-              type="text"
-              className="w-full p-2.5 border rounded-xl font-bold bg-slate-50 text-slate-900 outline-none"
-              value={testTitle}
-              onChange={(e) => setTestTitle(e.target.value)}
-            />
+            <input type="text" className="w-full p-2.5 border rounded-xl font-bold bg-slate-50 text-slate-900 outline-none" value={testTitle} onChange={(e) => setTestTitle(e.target.value)} />
           </div>
 
           <div>
             <label className="block font-bold text-gray-700 mb-1">Total Marks</label>
-            <input
-              type="number"
-              className="w-full p-2.5 border rounded-xl font-bold bg-slate-50 text-slate-900 outline-none"
-              value={totalMarks}
-              onChange={(e) => setTotalMarks(parseFloat(e.target.value) || 100)}
-            />
-          </div>
-
-        </div>
-
-      </div>
-
-      {/* 2. GRAPH 1: HIGH TO LOW RANKING MARKS BAR GRAPH */}
-      <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4">
-        <div className="flex justify-between items-center border-b pb-2">
-          <h3 className="text-xs font-black text-gray-600 uppercase tracking-wider flex items-center gap-1.5">
-            <span>📊</span> LIVE MARKS PERFORMANCE BAR GRAPH (RANKED: HIGH TO LOW)
-          </h3>
-          <span className="text-[11px] font-bold text-blue-900 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200">
-            {selectedSubject} | {testTitle}
-          </span>
-        </div>
-
-        {sortedStudentsForGraph.length > 0 ? (
-          <div className="pt-6 pb-2 px-2 flex items-end justify-around gap-2 h-64 overflow-x-auto border-b">
-            {sortedStudentsForGraph.map((st, idx) => {
-              const obt = marksMap[st.id] || 0;
-              const pct = Math.min(100, Math.round((obt / totalMarks) * 100));
-
-              // Dynamic Color Grading
-              let barBg = 'bg-emerald-500';
-              if (pct < 40) barBg = 'bg-rose-500';
-              else if (pct < 70) barBg = 'bg-blue-500';
-
-              return (
-                <div key={st.id} className="flex flex-col items-center flex-1 min-w-[50px] max-w-[80px] h-full justify-end group">
-                  <span className="text-[11px] font-black font-mono mb-1 text-slate-800">
-                    {obt}/{totalMarks}
-                  </span>
-
-                  <div
-                    style={{ height: `${Math.max(12, pct)}%` }}
-                    className={`w-full rounded-t-xl ${barBg} transition-all duration-500 shadow-md flex items-center justify-center text-[10px] font-extrabold text-white`}
-                  >
-                    {pct}%
-                  </div>
-
-                  <span className="text-[11px] font-bold text-slate-700 truncate w-full text-center mt-2 group-hover:text-blue-900">
-                    #{idx + 1} {st.full_name.split(' ')[0]}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="text-center py-10 text-xs text-gray-400 font-medium">
-            No student marks data available to display ranking graph.
-          </div>
-        )}
-      </div>
-
-      {/* 3. GRAPH 2: INDIVIDUAL STUDENT PROGRESS TREND (UP / DOWN GRAPH) */}
-      <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4">
-        
-        <div className="flex justify-between items-center flex-wrap gap-2 border-b pb-3">
-          <div>
-            <h3 className="text-xs font-black text-gray-600 uppercase tracking-wider flex items-center gap-1.5">
-              <span>📈</span> INDIVIDUAL STUDENT PROGRESS GRAPH (PAST vs PRESENT TREND)
-            </h3>
-            <p className="text-[11px] text-gray-500">Track if student performance is improving or declining</p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-bold text-gray-700">Select Student:</label>
-            <select
-              className="p-2 border rounded-xl font-bold text-xs bg-slate-50 text-blue-900 outline-none"
-              value={selectedStudentForAnalytics}
-              onChange={(e) => {
-                setSelectedStudentForAnalytics(e.target.value);
-                fetchStudentProgressHistory(e.target.value);
-              }}
-            >
-              {studentsList.map((st) => (
-                <option key={st.id} value={st.id}>
-                  {st.roll_no ? `Roll ${st.roll_no} - ` : ''}{st.full_name}
-                </option>
-              ))}
-            </select>
+            <input type="number" className="w-full p-2.5 border rounded-xl font-bold bg-slate-50 text-slate-900 outline-none" value={totalMarks} onChange={(e) => setTotalMarks(parseFloat(e.target.value) || 100)} />
           </div>
         </div>
-
-        {studentHistory.length > 0 ? (
-          <div className="p-4 bg-slate-50 rounded-2xl border space-y-3">
-            <div className="flex justify-between items-center text-xs">
-              <span className="font-bold text-gray-600">Past Tests Performance Over Time</span>
-              <span className="font-extrabold text-blue-900">
-                Total Tests Recorded: <b className="font-mono text-sm">{studentHistory.length}</b>
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3 pt-2">
-              {studentHistory.map((h, i) => {
-                const tMax = h.student_tests?.total_marks || 100;
-                const p = Math.round((h.obtained_marks / tMax) * 100);
-
-                // Check trend compared to previous test
-                const prevObt = i > 0 ? studentHistory[i - 1].obtained_marks : h.obtained_marks;
-                const isUp = h.obtained_marks >= prevObt;
-
-                return (
-                  <div key={i} className="bg-white p-3 rounded-xl border text-center shadow-sm space-y-1">
-                    <span className="text-[10px] font-bold text-gray-400 block truncate">
-                      {h.student_tests?.test_title || 'Test'}
-                    </span>
-                    <b className="text-sm font-black font-mono text-blue-950 block">
-                      {h.obtained_marks}/{tMax}
-                    </b>
-                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full inline-block ${
-                      isUp ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                    }`}>
-                      {isUp ? '📈 Up' : '📉 Down'} ({p}%)
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : (
-          <div className="text-center py-6 text-xs text-gray-400 font-medium">
-            Select a student to view their previous test progress trend.
-          </div>
-        )}
-
       </div>
 
-      {/* 4. MARKS ENTRY TABLE (ORDERED BY ROLL NO) */}
-      <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4">
-        
+      {/* 2. MARKS ENTRY TABLE (EASY ENTRY + ALLOWS 'A') */}
+      <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4 print:hidden">
         <div className="flex justify-between items-center border-b pb-3">
-          <h3 className="text-xs font-black text-blue-900 uppercase tracking-wider">
-            STUDENT MARKS ENTRY (ROLL NUMBER SERIAL WISE) ({studentsList.length})
+          <h3 className="text-xs font-black text-blue-950 uppercase tracking-wider">
+            STUDENT MARKS ENTRY ({studentsList.length} STUDENTS)
           </h3>
-          <span className="text-xs text-gray-500 font-medium">Max Marks: <b>{totalMarks}</b></span>
+          <span className="text-xs text-gray-500 font-bold">Type Number or <b>'A'</b> for Absent</span>
         </div>
 
-        <div className="space-y-2.5 max-h-96 overflow-y-auto">
+        <div className="space-y-2 max-h-96 overflow-y-auto">
           {studentsList.map((st, idx) => {
-            const currentObt = marksMap[st.id] || 0;
-            const pct = Math.round((currentObt / totalMarks) * 100);
-
-            let grade = 'A+';
-            let gradeBg = 'bg-emerald-100 text-emerald-800';
-            if (pct < 40) { grade = 'F'; gradeBg = 'bg-rose-100 text-rose-800'; }
-            else if (pct < 50) { grade = 'D'; gradeBg = 'bg-orange-100 text-orange-800'; }
-            else if (pct < 60) { grade = 'C'; gradeBg = 'bg-amber-100 text-amber-800'; }
-            else if (pct < 70) { grade = 'B'; gradeBg = 'bg-sky-100 text-sky-800'; }
-            else if (pct < 80) { grade = 'A'; gradeBg = 'bg-blue-100 text-blue-800'; }
+            const rawVal = marksMap[st.id] ?? '';
+            const isAbsent = rawVal.toUpperCase() === 'A';
+            const numVal = isAbsent ? 0 : parseFloat(rawVal) || 0;
+            const pct = Math.round((numVal / totalMarks) * 100);
 
             return (
-              <div
-                key={st.id}
-                className="p-3 bg-slate-50 rounded-2xl border flex items-center justify-between flex-wrap gap-2 text-xs"
-              >
-                {/* Roll No & Student Details */}
+              <div key={st.id} className="p-3 bg-slate-50 rounded-2xl border flex items-center justify-between flex-wrap gap-2 text-xs">
                 <div className="flex items-center gap-3">
-                  <span className="w-8 h-8 bg-blue-900 text-white rounded-xl flex items-center justify-center font-bold font-mono text-xs shrink-0">
+                  <span className="w-8 h-8 bg-blue-950 text-white rounded-xl flex items-center justify-center font-bold font-mono text-xs shrink-0">
                     {st.roll_no || idx + 1}
                   </span>
                   <div>
                     <h4 className="font-extrabold text-blue-950 text-sm">{st.full_name}</h4>
-                    <p className="text-[11px] text-gray-500 font-medium">
-                      S/O: {st.father_name || '-'} | Reg: <b className="text-gray-700">{st.registration_no || st.admission_no || '-'}</b>
-                    </p>
+                    <p className="text-[11px] text-gray-500 font-medium">S/O: {st.father_name || '-'}</p>
                   </div>
                 </div>
 
-                {/* Obtained Marks Input & Auto Grade */}
                 <div className="flex items-center gap-3">
                   <div>
-                    <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Obtained Marks</label>
+                    <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Obtained / 'A'</label>
                     <input
-                      type="number"
-                      min="0"
-                      max={totalMarks}
-                      className="w-24 p-2 border rounded-xl font-bold font-mono text-center text-sm bg-white outline-none focus:border-blue-700 text-blue-950"
-                      value={marksMap[st.id] ?? 0}
+                      type="text"
+                      placeholder="Marks or A"
+                      className="w-28 p-2 border rounded-xl font-bold font-mono text-center text-sm bg-white outline-none focus:border-blue-950 text-blue-950 uppercase"
+                      value={marksMap[st.id] ?? ''}
                       onChange={(e) => handleMarksChange(st.id, e.target.value)}
                     />
                   </div>
 
                   <div className="text-center">
-                    <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Grade</label>
-                    <span className={`px-3 py-1.5 rounded-xl font-black text-xs block font-mono ${gradeBg}`}>
-                      {grade} ({pct}%)
+                    <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Status</label>
+                    <span className={`px-3 py-1.5 rounded-xl font-black text-xs block font-mono ${isAbsent ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                      {isAbsent ? 'ABSENT (A)' : `${pct}%`}
                     </span>
                   </div>
                 </div>
               </div>
             );
           })}
-
-          {studentsList.length === 0 && !loading && (
-            <p className="text-xs text-gray-400 text-center py-12 font-medium">
-              No students found in the selected class to enter test results.
-            </p>
-          )}
         </div>
 
-        {/* Save Button */}
         <button
           type="button"
           onClick={handleSaveResult}
           disabled={loading || studentsList.length === 0}
-          className="w-full p-4 bg-blue-900 hover:bg-blue-800 text-white rounded-2xl font-black text-xs transition shadow-md flex items-center justify-center gap-2"
+          className="w-full p-3.5 bg-blue-950 hover:bg-blue-900 text-white rounded-2xl font-black text-xs transition shadow-md flex items-center justify-center gap-2"
         >
           <span>💾</span>
-          <span>Save Result & Update Live Performance Analytics</span>
+          <span>Save Result & Update Consolidated Result Sheet</span>
         </button>
+      </div>
+
+      {/* 3. OFFICIAL CONSOLIDATED CLASS RESULT SHEET (EXACT FORMAT MATCHING YOUR PHOTO) */}
+      <div className="bg-white p-6 rounded-3xl shadow-sm border space-y-4 print:p-0 print:border-none print:shadow-none">
+        
+        {/* Buttons to Print & Download */}
+        <div className="flex justify-between items-center border-b pb-3 print:hidden">
+          <div>
+            <h3 className="text-sm font-black text-blue-950 uppercase tracking-wider">
+              🏛️ Official Consolidated Result Sheet
+            </h3>
+            <p className="text-xs text-gray-500">Auto-generated format matching academy standard</p>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={handlePrintSheet}
+              className="bg-blue-950 hover:bg-blue-900 text-white text-xs font-black px-4 py-2 rounded-xl transition shadow-sm flex items-center gap-1.5"
+            >
+              <span>🖨️</span> Print Result Sheet
+            </button>
+          </div>
+        </div>
+
+        {/* PRINTABLE RESULT SHEET CONTAINER */}
+        <div ref={printRef} className="space-y-3 font-sans text-black p-2">
+          
+          {/* ACADEMY HEADER */}
+          <div className="text-center border-b-2 border-black pb-2 space-y-0.5">
+            <h1 className="text-xl md:text-2xl font-black tracking-wide uppercase">
+              NEW BRIGHT SCHOLARS SCIENCE ACADEMY KAROR
+            </h1>
+            <p className="text-[11px] font-bold uppercase tracking-tight">
+              NEAR CHILDREN PARK WARD #5 KAROR LAL ESAN Ph #: 0313-6766476 / 0302-2122262
+            </p>
+            <div className="flex justify-between items-center text-xs font-extrabold pt-2">
+              <span>{testTitle}</span>
+              <span className="underline">
+                Result Sheet: {selectedClassObj?.class_name || 'Class'} ({selectedClassObj?.section_name || 'Section'})
+              </span>
+            </div>
+          </div>
+
+          {/* OFFICIAL TABLE FORMAT */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-[11px] text-center border-collapse border border-black font-semibold">
+              <thead>
+                <tr className="bg-gray-200 border-b border-black font-bold text-black">
+                  <th className="border border-black p-1.5 w-10">Sr.#</th>
+                  <th className="border border-black p-1.5 text-left min-w-[200px]">Students with Parentage</th>
+                  
+                  {/* DYNAMIC SUBJECT HEADERS (ONLY SUBJECTS WITH ENTERED RESULTS) */}
+                  {classConsolidatedSubjects.map((sub) => (
+                    <th key={sub.id} className="border border-black p-1">
+                      {sub.subject_name.slice(0, 4)}
+                      <div className="text-[9px] font-normal">({sub.total_marks})</div>
+                    </th>
+                  ))}
+
+                  <th className="border border-black p-1.5 bg-gray-300 w-16">Obtained Marks</th>
+                  <th className="border border-black p-1.5 bg-gray-300 w-14">%age</th>
+                  <th className="border border-black p-1.5 bg-gray-300 w-14">Position</th>
+                </tr>
+              </thead>
+              <tbody>
+                {classConsolidatedData.length > 0 ? (
+                  classConsolidatedData.map((row, idx) => (
+                    <tr key={row.studentId} className="border-b border-black hover:bg-gray-50 font-mono">
+                      <td className="border border-black p-1 font-bold">{idx + 1}</td>
+                      <td className="border border-black p-1 text-left font-sans font-bold uppercase">
+                        {row.name} {row.fatherName ? `D/O ${row.fatherName}` : ''}
+                      </td>
+
+                      {/* MARKS FOR EACH SUBJECT */}
+                      {classConsolidatedSubjects.map((sub) => {
+                        const val = row.subjScores[sub.id] || '-';
+                        return (
+                          <td key={sub.id} className={`border border-black p-1 font-bold ${val === 'A' ? 'text-rose-700' : ''}`}>
+                            {val}
+                          </td>
+                        );
+                      })}
+
+                      <td className="border border-black p-1 font-black bg-gray-100">{row.grandObtained}</td>
+                      <td className="border border-black p-1 font-black bg-gray-100">{row.percentage}%</td>
+                      <td className="border border-black p-1 font-black bg-gray-200 text-blue-950">{row.position}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={5 + classConsolidatedSubjects.length} className="p-8 text-center text-gray-400 font-bold border border-black">
+                      No subject results saved for this class yet. Select class and save results above.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+        </div>
 
       </div>
 
