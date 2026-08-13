@@ -24,18 +24,27 @@ export default function TeacherResultAnalyticsPage() {
   const [selectedStudentForAnalytics, setSelectedStudentForAnalytics] = useState('');
   const [studentHistory, setStudentHistory] = useState<any[]>([]);
 
-  // Consolidated Class Sheet Data (DB Fetched)
+  // Consolidated Class Sheet Data
   const [classConsolidatedSubjects, setClassConsolidatedSubjects] = useState<any[]>([]);
   const [classConsolidatedData, setClassConsolidatedData] = useState<any[]>([]);
 
-  // Alert State
-  const [alert, setAlert] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  // Beautiful Popup Modal State (Replaces browser alerts)
+  const [popup, setPopup] = useState<{
+    show: boolean;
+    type: 'success' | 'error';
+    title: string;
+    message: string;
+  }>({
+    show: false,
+    type: 'success',
+    title: '',
+    message: '',
+  });
 
   useEffect(() => {
     fetchTeacherAssignments();
   }, []);
 
-  // 1. Fetch Assigned Classes & Subjects for Teacher
   const fetchTeacherAssignments = async () => {
     setLoading(true);
 
@@ -69,7 +78,6 @@ export default function TeacherResultAnalyticsPage() {
     setLoading(false);
   };
 
-  // 2. Load Students & Existing Tests Sheet
   const loadClassStudents = async (classId: string) => {
     if (!classId) return;
 
@@ -85,7 +93,6 @@ export default function TeacherResultAnalyticsPage() {
     const currentStudents = stData || [];
     setStudentsList(currentStudents);
 
-    // Initial empty/clear marks map (No default '0')
     const initialMarks: { [key: string]: string } = {};
     currentStudents.forEach((st) => {
       initialMarks[st.id] = '';
@@ -99,17 +106,13 @@ export default function TeacherResultAnalyticsPage() {
       setStudentHistory([]);
     }
 
-    // Load Consolidated Class Result Sheet for tests that actually exist
     await fetchConsolidatedClassSheet(classId, currentStudents);
-
     setLoading(false);
   };
 
-  // Load ONLY subjects with actual entered test results for this class
   const fetchConsolidatedClassSheet = async (classId: string, currentStudents: any[]) => {
     if (!classId || currentStudents.length === 0) return;
 
-    // Fetch tests created for this class
     const { data: tests } = await supabase
       .from('student_tests')
       .select('*')
@@ -128,10 +131,8 @@ export default function TeacherResultAnalyticsPage() {
       .select('*')
       .in('test_id', testIds);
 
-    // Map Tests List
     setClassConsolidatedSubjects(tests);
 
-    // Map Student-wise Consolidated Scores
     const rows = currentStudents.map((st) => {
       let grandObtained = 0;
       let grandTotal = 0;
@@ -141,7 +142,7 @@ export default function TeacherResultAnalyticsPage() {
         const markObj = allMarks?.find((m) => m.test_id === t.id && m.student_id === st.id);
         if (markObj) {
           const valStr = String(markObj.obtained_marks || '').trim();
-          if (valStr.toUpperCase() === 'A' || valStr.toUpperCase() === 'ABSENT') {
+          if (valStr.toUpperCase() === 'A' || valStr === '0' && markObj.obtained_marks === 0) {
             subjScores[t.id] = 'A';
             grandTotal += parseFloat(t.total_marks || 0);
           } else {
@@ -170,7 +171,6 @@ export default function TeacherResultAnalyticsPage() {
       };
     });
 
-    // Calculate Positions (1st, 2nd, 3rd)
     const sorted = [...rows].sort((a, b) => b.grandObtained - a.grandObtained);
     sorted.forEach((row, idx) => {
       if (row.grandObtained > 0) {
@@ -188,7 +188,6 @@ export default function TeacherResultAnalyticsPage() {
     loadClassStudents(newClassId);
   };
 
-  // Allows Typing Numbers or 'A' / 'a' (Absent) without annoying '0'
   const handleMarksChange = (studentId: string, val: string) => {
     if (val.toUpperCase() === 'A') {
       setMarksMap((prev) => ({ ...prev, [studentId]: 'A' }));
@@ -197,15 +196,19 @@ export default function TeacherResultAnalyticsPage() {
     setMarksMap((prev) => ({ ...prev, [studentId]: val }));
   };
 
-  // Save Test Results to Supabase
+  // Save Test Results with Numeric Compatibility & Beautiful Popup
   const handleSaveResult = async () => {
     if (!selectedClassId || !selectedSubject || studentsList.length === 0) {
-      setAlert({ type: 'error', msg: 'Please select class, subject and ensure students are available.' });
+      setPopup({
+        show: true,
+        type: 'error',
+        title: 'Action Required',
+        message: 'Please select class, subject and ensure students are available.',
+      });
       return;
     }
 
     setLoading(true);
-    setAlert(null);
 
     const { data: testData, error: testErr } = await supabase
       .from('student_tests')
@@ -222,17 +225,24 @@ export default function TeacherResultAnalyticsPage() {
       .single();
 
     if (testErr || !testData) {
-      setAlert({ type: 'error', msg: testErr?.message || 'Failed to save test details.' });
       setLoading(false);
+      setPopup({
+        show: true,
+        type: 'error',
+        title: 'Save Failed',
+        message: testErr?.message || 'Failed to save test details.',
+      });
       return;
     }
 
+    // Convert 'A' to 0 for numeric table column to avoid syntax error
     const marksPayload = studentsList.map((st) => {
       const rawVal = (marksMap[st.id] || '').trim();
+      const isAbsent = rawVal.toUpperCase() === 'A';
       return {
         test_id: testData.id,
         student_id: st.id,
-        obtained_marks: rawVal.toUpperCase() === 'A' ? 'A' : (parseFloat(rawVal) || 0).toString(),
+        obtained_marks: isAbsent ? 0 : Math.min(totalMarks, Math.max(0, parseFloat(rawVal) || 0)),
       };
     });
 
@@ -241,9 +251,19 @@ export default function TeacherResultAnalyticsPage() {
     setLoading(false);
 
     if (marksErr) {
-      setAlert({ type: 'error', msg: marksErr.message });
+      setPopup({
+        show: true,
+        type: 'error',
+        title: 'Save Failed',
+        message: marksErr.message,
+      });
     } else {
-      setAlert({ type: 'success', msg: 'Class Test Results Saved & Official Sheet Updated!' });
+      setPopup({
+        show: true,
+        type: 'success',
+        title: 'Result Saved Successfully!',
+        message: 'Class test results saved & official sheet updated successfully.',
+      });
       fetchConsolidatedClassSheet(selectedClassId, studentsList);
     }
   };
@@ -269,18 +289,43 @@ export default function TeacherResultAnalyticsPage() {
   return (
     <div className="p-3 md:p-6 max-w-6xl mx-auto space-y-6 font-sans pb-20">
       
+      {/* 🚀 BEAUTIFUL CUSTOM POPUP MODAL */}
+      {popup.show && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className={`bg-white rounded-3xl p-6 shadow-2xl max-w-md w-full border-t-8 text-center space-y-4 ${
+            popup.type === 'success' ? 'border-emerald-600' : 'border-rose-600'
+          }`}>
+            <div className={`w-16 h-16 rounded-full mx-auto flex items-center justify-center text-3xl font-black ${
+              popup.type === 'success' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'
+            }`}>
+              {popup.type === 'success' ? '✓' : '✕'}
+            </div>
+
+            <div className="space-y-1">
+              <h3 className={`text-lg font-black ${popup.type === 'success' ? 'text-emerald-900' : 'text-rose-900'}`}>
+                {popup.title}
+              </h3>
+              <p className="text-xs text-gray-600 font-medium">{popup.message}</p>
+            </div>
+
+            <button
+              onClick={() => setPopup({ ...popup, show: false })}
+              className={`w-full py-3 rounded-2xl text-xs font-black text-white transition shadow-md ${
+                popup.type === 'success' ? 'bg-emerald-700 hover:bg-emerald-800' : 'bg-rose-700 hover:bg-rose-800'
+              }`}
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 1. TOP HEADER & CONTROLS */}
       <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4 print:hidden">
         <div className="border-b pb-2">
           <h2 className="text-xl font-black text-blue-950">Subject Result & Performance Analytics</h2>
           <p className="text-xs text-gray-500">Enter marks (or 'A' for absent) to auto-generate class consolidated sheets</p>
         </div>
-
-        {alert && (
-          <div className={`p-3 rounded-2xl text-xs font-bold border ${alert.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
-            {alert.type === 'error' ? '⚠️ ' : '✓ '} {alert.msg}
-          </div>
-        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
           <div>
@@ -313,7 +358,7 @@ export default function TeacherResultAnalyticsPage() {
         </div>
       </div>
 
-      {/* 2. MARKS ENTRY TABLE (EASY ENTRY + ALLOWS 'A') */}
+      {/* 2. MARKS ENTRY TABLE (WITH GRADE & PERCENTAGE BADGE) */}
       <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4 print:hidden">
         <div className="flex justify-between items-center border-b pb-3">
           <h3 className="text-xs font-black text-blue-950 uppercase tracking-wider">
@@ -328,6 +373,15 @@ export default function TeacherResultAnalyticsPage() {
             const isAbsent = rawVal.toUpperCase() === 'A';
             const numVal = isAbsent ? 0 : parseFloat(rawVal) || 0;
             const pct = Math.round((numVal / totalMarks) * 100);
+
+            let grade = 'A+';
+            let gradeBg = 'bg-emerald-100 text-emerald-800';
+            if (isAbsent) { grade = 'ABSENT'; gradeBg = 'bg-rose-100 text-rose-800'; }
+            else if (pct < 40) { grade = 'F'; gradeBg = 'bg-rose-100 text-rose-800'; }
+            else if (pct < 50) { grade = 'D'; gradeBg = 'bg-orange-100 text-orange-800'; }
+            else if (pct < 60) { grade = 'C'; gradeBg = 'bg-amber-100 text-amber-800'; }
+            else if (pct < 70) { grade = 'B'; gradeBg = 'bg-sky-100 text-sky-800'; }
+            else if (pct < 80) { grade = 'A'; gradeBg = 'bg-blue-100 text-blue-800'; }
 
             return (
               <div key={st.id} className="p-3 bg-slate-50 rounded-2xl border flex items-center justify-between flex-wrap gap-2 text-xs">
@@ -354,9 +408,9 @@ export default function TeacherResultAnalyticsPage() {
                   </div>
 
                   <div className="text-center">
-                    <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Status</label>
-                    <span className={`px-3 py-1.5 rounded-xl font-black text-xs block font-mono ${isAbsent ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'}`}>
-                      {isAbsent ? 'ABSENT (A)' : `${pct}%`}
+                    <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Grade & Status</label>
+                    <span className={`px-3 py-1.5 rounded-xl font-black text-xs block font-mono ${gradeBg}`}>
+                      {grade} ({isAbsent ? '0' : pct}%)
                     </span>
                   </div>
                 </div>
@@ -376,10 +430,9 @@ export default function TeacherResultAnalyticsPage() {
         </button>
       </div>
 
-      {/* 3. OFFICIAL CONSOLIDATED CLASS RESULT SHEET (EXACT FORMAT MATCHING YOUR PHOTO) */}
+      {/* 3. OFFICIAL CONSOLIDATED CLASS RESULT SHEET */}
       <div className="bg-white p-6 rounded-3xl shadow-sm border space-y-4 print:p-0 print:border-none print:shadow-none">
         
-        {/* Buttons to Print & Download */}
         <div className="flex justify-between items-center border-b pb-3 print:hidden">
           <div>
             <h3 className="text-sm font-black text-blue-950 uppercase tracking-wider">
@@ -401,7 +454,6 @@ export default function TeacherResultAnalyticsPage() {
         {/* PRINTABLE RESULT SHEET CONTAINER */}
         <div ref={printRef} className="space-y-3 font-sans text-black p-2">
           
-          {/* ACADEMY HEADER */}
           <div className="text-center border-b-2 border-black pb-2 space-y-0.5">
             <h1 className="text-xl md:text-2xl font-black tracking-wide uppercase">
               NEW BRIGHT SCHOLARS SCIENCE ACADEMY KAROR
@@ -417,7 +469,6 @@ export default function TeacherResultAnalyticsPage() {
             </div>
           </div>
 
-          {/* OFFICIAL TABLE FORMAT */}
           <div className="overflow-x-auto">
             <table className="w-full text-[11px] text-center border-collapse border border-black font-semibold">
               <thead>
@@ -425,7 +476,6 @@ export default function TeacherResultAnalyticsPage() {
                   <th className="border border-black p-1.5 w-10">Sr.#</th>
                   <th className="border border-black p-1.5 text-left min-w-[200px]">Students with Parentage</th>
                   
-                  {/* DYNAMIC SUBJECT HEADERS (ONLY SUBJECTS WITH ENTERED RESULTS) */}
                   {classConsolidatedSubjects.map((sub) => (
                     <th key={sub.id} className="border border-black p-1">
                       {sub.subject_name.slice(0, 4)}
@@ -447,7 +497,6 @@ export default function TeacherResultAnalyticsPage() {
                         {row.name} {row.fatherName ? `D/O ${row.fatherName}` : ''}
                       </td>
 
-                      {/* MARKS FOR EACH SUBJECT */}
                       {classConsolidatedSubjects.map((sub) => {
                         const val = row.subjScores[sub.id] || '-';
                         return (
