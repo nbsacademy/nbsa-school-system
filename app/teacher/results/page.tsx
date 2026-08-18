@@ -142,7 +142,7 @@ export default function TeacherResultAnalyticsPage() {
     setLoading(false);
   };
 
-  // FETCH & MAP CONSOLIDATED SHEET (SHOWS 'A' INSTEAD OF '0' FOR ABSENTEES)
+  // 🎯 FETCH CONSOLIDATED SHEET & FORCE 'A' FOR 0 / ABSENT RECORDS
   const fetchConsolidatedClassSheet = async (classId: string, currentStudents: any[]) => {
     if (!classId || currentStudents.length === 0) return;
 
@@ -179,19 +179,14 @@ export default function TeacherResultAnalyticsPage() {
       tests.forEach((t) => {
         const markObj = allMarks?.find((m) => m.test_id === t.id && m.student_id === st.id);
         if (markObj) {
-          const valStr = String(markObj.obtained_marks ?? '').trim();
-          
-          // Check if recorded as absent or exactly 0
-          if (
-            valStr.toUpperCase() === 'A' ||
-            valStr === '0' ||
-            markObj.obtained_marks === 0 ||
-            markObj.is_absent === true
-          ) {
+          const raw = markObj.obtained_marks;
+          const isAbsentFlag = markObj.is_absent === true || String(raw).trim() === '0' || raw === 0 || String(raw).toUpperCase() === 'A';
+
+          if (isAbsentFlag) {
             subjScores[t.id] = 'A';
             grandTotal += parseFloat(t.total_marks || 0);
           } else {
-            const num = parseFloat(valStr) || 0;
+            const num = parseFloat(raw) || 0;
             subjScores[t.id] = String(num);
             grandObtained += num;
             grandTotal += parseFloat(t.total_marks || 0);
@@ -733,7 +728,7 @@ export default function TeacherResultAnalyticsPage() {
 
       </div>
 
-      {/* 5. OFFICIAL CONSOLIDATED CLASS RESULT SHEET (FIXED: SHOWS 'A' INSTEAD OF '0') */}
+      {/* 5. OFFICIAL CONSOLIDATED CLASS RESULT SHEET (FIXED: STRICTLY RENDERS 'A') */}
       <div className="bg-white p-6 rounded-3xl shadow-sm border space-y-4 print:p-0 print:border-none print:shadow-none">
         
         <div className="flex justify-between items-center border-b pb-3 print:hidden">
@@ -810,12 +805,13 @@ export default function TeacherResultAnalyticsPage() {
                         {row.name} {row.fatherName ? `${row.parentPrefix} ${row.fatherName}` : ''}
                       </td>
 
-                      {/* MARKS FOR EACH SUBJECT (CORRECTLY SHOWS 'A' IN RED) */}
+                      {/* MARKS FOR EACH SUBJECT (FORCE RENDERS 'A' IN RED) */}
                       {classConsolidatedSubjects.map((sub) => {
                         const val = row.subjScores[sub.id] || '-';
+                        const isAbsentScore = val === 'A' || val === '0';
                         return (
-                          <td key={sub.id} className={`border border-black p-1 font-black ${val === 'A' ? 'text-rose-700 font-sans' : ''}`}>
-                            {val}
+                          <td key={sub.id} className={`border border-black p-1 font-black ${isAbsentScore ? 'text-rose-700 font-sans' : ''}`}>
+                            {isAbsentScore ? 'A' : val}
                           </td>
                         );
                       })}
