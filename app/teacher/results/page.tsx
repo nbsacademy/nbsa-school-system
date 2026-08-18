@@ -244,16 +244,19 @@ export default function TeacherResultAnalyticsPage() {
     }
 
     // 3. If numeric input (digits or decimal)
+    // Filter out non-numeric characters except single decimal point
     const cleanedNum = trimmed.replace(/[^0-9.]/g, '');
     if (cleanedNum !== '') {
       const numVal = parseFloat(cleanedNum);
       if (!isNaN(numVal)) {
+        // Clamp to total marks maximum
         const finalVal = Math.min(totalMarks, Math.max(0, numVal));
         setMarksMap((prev) => ({ ...prev, [studentId]: cleanedNum.endsWith('.') ? cleanedNum : String(finalVal) }));
         return;
       }
     }
 
+    // Fallback: update state directly
     setMarksMap((prev) => ({ ...prev, [studentId]: trimmed }));
   };
 
@@ -616,7 +619,7 @@ export default function TeacherResultAnalyticsPage() {
         )}
       </div>
 
-      {/* 4. MARKS ENTRY TABLE (WITH inputMode="decimal" FOR NUMERIC KEYBOARD DEFAULT) */}
+      {/* 4. MARKS ENTRY TABLE (EASY DIRECT NUMBER & 'A' INPUT) */}
       <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4 print:hidden">
         <div className="flex justify-between items-center border-b pb-3">
           <h3 className="text-xs font-black text-blue-950 uppercase tracking-wider">
@@ -661,7 +664,6 @@ export default function TeacherResultAnalyticsPage() {
                     <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Obtained / 'A' *</label>
                     <input
                       type="text"
-                      inputMode="decimal"
                       placeholder="e.g. 85 or A"
                       disabled={isDuplicateTest}
                       className="w-28 p-2 border rounded-xl font-bold font-mono text-center text-sm bg-white outline-none focus:border-blue-950 text-blue-950 uppercase disabled:opacity-50"
