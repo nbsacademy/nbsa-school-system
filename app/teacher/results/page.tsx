@@ -227,20 +227,23 @@ export default function TeacherResultAnalyticsPage() {
     loadClassStudents(newClassId);
   };
 
-  // 🎯 DYNAMIC MARKS HANDLER
+  // 🎯 DYNAMIC MARKS HANDLER: Numbers first, and 'A' / 'a' allowed smoothly
   const handleMarksChange = (studentId: string, inputVal: string) => {
     const trimmed = inputVal.trim();
 
+    // 1. If empty, clear field
     if (trimmed === '') {
       setMarksMap((prev) => ({ ...prev, [studentId]: '' }));
       return;
     }
 
+    // 2. If user specifically inputs 'A' or 'a' for Absent
     if (trimmed.toUpperCase() === 'A' || trimmed.toLowerCase() === 'absent') {
       setMarksMap((prev) => ({ ...prev, [studentId]: 'A' }));
       return;
     }
 
+    // 3. If numeric input (digits or decimal)
     const cleanedNum = trimmed.replace(/[^0-9.]/g, '');
     if (cleanedNum !== '') {
       const numVal = parseFloat(cleanedNum);
@@ -252,15 +255,6 @@ export default function TeacherResultAnalyticsPage() {
     }
 
     setMarksMap((prev) => ({ ...prev, [studentId]: trimmed }));
-  };
-
-  // Toggle quick Absent (A)
-  const handleToggleAbsent = (studentId: string) => {
-    if (marksMap[studentId] === 'A') {
-      setMarksMap((prev) => ({ ...prev, [studentId]: '' }));
-    } else {
-      setMarksMap((prev) => ({ ...prev, [studentId]: 'A' }));
-    }
   };
 
   // SAVE RESULT WITH STRICT VALIDATION & DUPLICATE BLOCKING
@@ -286,7 +280,7 @@ export default function TeacherResultAnalyticsPage() {
         show: true,
         type: 'error',
         title: 'Incomplete Marks Entry',
-        message: `Please enter marks for all ${studentsList.length} students! Type marks or click 'A' for absent students. (${unfilledStudents.length} remaining)`,
+        message: `Please enter marks for all ${studentsList.length} students! Type marks or 'A' for absent students. (${unfilledStudents.length} remaining)`,
       });
       return;
     }
@@ -458,7 +452,7 @@ export default function TeacherResultAnalyticsPage() {
         <div className="border-b pb-2 flex justify-between items-center flex-wrap gap-2">
           <div>
             <h2 className="text-xl font-black text-blue-950">Subject Result & Performance Analytics</h2>
-            <p className="text-xs text-gray-500">Enter marks (or click 'A' for absent) to auto-generate class consolidated sheets</p>
+            <p className="text-xs text-gray-500">Enter marks (or 'A' for absent) to auto-generate class consolidated sheets</p>
           </div>
 
           {isDuplicateTest && (
@@ -622,7 +616,7 @@ export default function TeacherResultAnalyticsPage() {
         )}
       </div>
 
-      {/* 4. MARKS ENTRY TABLE (TOUCH FRIENDLY KEYBOARD + QUICK ABSENT BUTTON) */}
+      {/* 4. MARKS ENTRY TABLE (WITH inputMode="decimal" FOR NUMERIC KEYBOARD DEFAULT) */}
       <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4 print:hidden">
         <div className="flex justify-between items-center border-b pb-3">
           <h3 className="text-xs font-black text-blue-950 uppercase tracking-wider">
@@ -662,42 +656,23 @@ export default function TeacherResultAnalyticsPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   <div>
-                    <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Obtained Marks</label>
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="text"
-                        pattern="[0-9]*"
-                        placeholder="Marks"
-                        disabled={isDuplicateTest}
-                        className={`w-24 p-2 border rounded-xl font-bold font-mono text-center text-sm outline-none focus:border-blue-950 disabled:opacity-50 ${
-                          isAbsent ? 'bg-rose-50 border-rose-300 text-rose-700 font-black' : 'bg-white text-blue-950'
-                        }`}
-                        value={marksMap[st.id] ?? ''}
-                        onChange={(e) => handleMarksChange(st.id, e.target.value)}
-                      />
-                      
-                      {/* QUICK TOGGLE ABSENT BUTTON */}
-                      <button
-                        type="button"
-                        onClick={() => handleToggleAbsent(st.id)}
-                        disabled={isDuplicateTest}
-                        className={`px-2.5 py-2 rounded-xl text-xs font-black border transition active:scale-95 ${
-                          isAbsent
-                            ? 'bg-rose-700 text-white border-rose-800 shadow-inner'
-                            : 'bg-slate-200 hover:bg-rose-100 text-slate-700 hover:text-rose-900 border-slate-300'
-                        }`}
-                        title="Mark Absent"
-                      >
-                        A
-                      </button>
-                    </div>
+                    <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Obtained / 'A' *</label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="e.g. 85 or A"
+                      disabled={isDuplicateTest}
+                      className="w-28 p-2 border rounded-xl font-bold font-mono text-center text-sm bg-white outline-none focus:border-blue-950 text-blue-950 uppercase disabled:opacity-50"
+                      value={marksMap[st.id] ?? ''}
+                      onChange={(e) => handleMarksChange(st.id, e.target.value)}
+                    />
                   </div>
 
                   <div className="text-center">
                     <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Grade & Status</label>
-                    <span className={`px-3 py-2 rounded-xl font-black text-xs block font-mono ${gradeBg}`}>
+                    <span className={`px-3 py-1.5 rounded-xl font-black text-xs block font-mono ${gradeBg}`}>
                       {grade} ({isAbsent ? '0%' : rawVal !== '' ? `${pct}%` : '-'})
                     </span>
                   </div>
