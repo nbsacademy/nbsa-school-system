@@ -142,6 +142,7 @@ export default function TeacherResultAnalyticsPage() {
     setLoading(false);
   };
 
+  // FETCH & MAP CONSOLIDATED SHEET (SHOWS 'A' INSTEAD OF '0' FOR ABSENTEES)
   const fetchConsolidatedClassSheet = async (classId: string, currentStudents: any[]) => {
     if (!classId || currentStudents.length === 0) return;
 
@@ -178,8 +179,15 @@ export default function TeacherResultAnalyticsPage() {
       tests.forEach((t) => {
         const markObj = allMarks?.find((m) => m.test_id === t.id && m.student_id === st.id);
         if (markObj) {
-          const valStr = String(markObj.obtained_marks || '').trim();
-          if (valStr.toUpperCase() === 'A' || (valStr === '0' && markObj.obtained_marks === 0)) {
+          const valStr = String(markObj.obtained_marks ?? '').trim();
+          
+          // Check if recorded as absent or exactly 0
+          if (
+            valStr.toUpperCase() === 'A' ||
+            valStr === '0' ||
+            markObj.obtained_marks === 0 ||
+            markObj.is_absent === true
+          ) {
             subjScores[t.id] = 'A';
             grandTotal += parseFloat(t.total_marks || 0);
           } else {
@@ -227,7 +235,7 @@ export default function TeacherResultAnalyticsPage() {
     loadClassStudents(newClassId);
   };
 
-  // 🎯 Pure Number input handler
+  // Pure Number input handler
   const handleMarksChange = (studentId: string, inputVal: string) => {
     if (inputVal === '') {
       setMarksMap((prev) => ({ ...prev, [studentId]: '' }));
@@ -241,7 +249,7 @@ export default function TeacherResultAnalyticsPage() {
     }
   };
 
-  // 🎯 1-Tap Toggle Absent (A) Button
+  // 1-Tap Toggle Absent (A) Button
   const handleToggleAbsent = (studentId: string) => {
     if (marksMap[studentId] === 'A') {
       setMarksMap((prev) => ({ ...prev, [studentId]: '' }));
@@ -250,7 +258,7 @@ export default function TeacherResultAnalyticsPage() {
     }
   };
 
-  // SAVE RESULT WITH STRICT VALIDATION & DUPLICATE BLOCKING
+  // SAVE RESULT
   const handleSaveResult = async () => {
     if (!selectedClassId || !selectedSubject || studentsList.length === 0) {
       setPopup({
@@ -262,7 +270,6 @@ export default function TeacherResultAnalyticsPage() {
       return;
     }
 
-    // STRICT VALIDATION: Check if ALL student fields are filled
     const unfilledStudents = studentsList.filter((st) => {
       const val = (marksMap[st.id] ?? '').toString().trim();
       return val === '';
@@ -278,7 +285,6 @@ export default function TeacherResultAnalyticsPage() {
       return;
     }
 
-    // DUPLICATE CHECK
     if (isDuplicateTest) {
       setPopup({
         show: true,
@@ -350,7 +356,6 @@ export default function TeacherResultAnalyticsPage() {
     }
   };
 
-  // Delete/Reverse Test Result
   const handleDeleteSubjectTest = async (testId: string, subjectName: string) => {
     if (!confirm(`Are you sure you want to delete/reverse the test result for ${subjectName}?`)) return;
 
@@ -399,7 +404,6 @@ export default function TeacherResultAnalyticsPage() {
 
   const selectedClassObj = classesList.find((c) => c.id === selectedClassId);
 
-  // Sorted Students for Class Ranking Graph
   const sortedStudentsForGraph = [...studentsList].sort((a, b) => {
     const valA = (marksMap[a.id] || '').toUpperCase() === 'A' ? 0 : parseFloat(marksMap[a.id]) || 0;
     const valB = (marksMap[b.id] || '').toUpperCase() === 'A' ? 0 : parseFloat(marksMap[b.id]) || 0;
@@ -577,7 +581,7 @@ export default function TeacherResultAnalyticsPage() {
             <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3 pt-2">
               {studentHistory.map((h, i) => {
                 const tMax = h.student_tests?.total_marks || 100;
-                const isAbsent = String(h.obtained_marks).toUpperCase() === 'A';
+                const isAbsent = String(h.obtained_marks).toUpperCase() === 'A' || h.obtained_marks === 0;
                 const obt = isAbsent ? 0 : parseFloat(h.obtained_marks) || 0;
                 const p = Math.round((obt / tMax) * 100);
 
@@ -609,7 +613,7 @@ export default function TeacherResultAnalyticsPage() {
         )}
       </div>
 
-      {/* 4. MARKS ENTRY TABLE (PURE NUMERIC INPUT + 1-TAP ABSENT BUTTON) */}
+      {/* 4. MARKS ENTRY TABLE (NUMERIC DEFAULT + 1-TAP ABSENT BUTTON) */}
       <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4 print:hidden">
         <div className="flex justify-between items-center border-b pb-3">
           <h3 className="text-xs font-black text-blue-950 uppercase tracking-wider">
@@ -653,7 +657,6 @@ export default function TeacherResultAnalyticsPage() {
                   <div>
                     <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Obtained Marks</label>
                     <div className="flex items-center gap-1.5">
-                      {/* PURE NUMBER INPUT -> DEFAULTS TO NUMERIC KEYPAD */}
                       <input
                         type={isAbsent ? "text" : "number"}
                         inputMode="numeric"
@@ -666,7 +669,6 @@ export default function TeacherResultAnalyticsPage() {
                         onChange={(e) => handleMarksChange(st.id, e.target.value)}
                       />
                       
-                      {/* 1-TAP QUICK ABSENT BUTTON */}
                       <button
                         type="button"
                         onClick={() => handleToggleAbsent(st.id)}
@@ -731,7 +733,7 @@ export default function TeacherResultAnalyticsPage() {
 
       </div>
 
-      {/* 5. OFFICIAL CONSOLIDATED CLASS RESULT SHEET */}
+      {/* 5. OFFICIAL CONSOLIDATED CLASS RESULT SHEET (FIXED: SHOWS 'A' INSTEAD OF '0') */}
       <div className="bg-white p-6 rounded-3xl shadow-sm border space-y-4 print:p-0 print:border-none print:shadow-none">
         
         <div className="flex justify-between items-center border-b pb-3 print:hidden">
@@ -808,10 +810,11 @@ export default function TeacherResultAnalyticsPage() {
                         {row.name} {row.fatherName ? `${row.parentPrefix} ${row.fatherName}` : ''}
                       </td>
 
+                      {/* MARKS FOR EACH SUBJECT (CORRECTLY SHOWS 'A' IN RED) */}
                       {classConsolidatedSubjects.map((sub) => {
                         const val = row.subjScores[sub.id] || '-';
                         return (
-                          <td key={sub.id} className={`border border-black p-1 font-bold ${val === 'A' ? 'text-rose-700' : ''}`}>
+                          <td key={sub.id} className={`border border-black p-1 font-black ${val === 'A' ? 'text-rose-700 font-sans' : ''}`}>
                             {val}
                           </td>
                         );
