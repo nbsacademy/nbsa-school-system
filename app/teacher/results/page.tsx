@@ -194,8 +194,6 @@ export default function TeacherResultAnalyticsPage() {
       });
 
       const percentage = grandTotal > 0 ? ((grandObtained / grandTotal) * 100).toFixed(2) : '0.00';
-
-      // Fix: Gender Detection for S/O vs D/O
       const isGirl = st.gender?.toLowerCase() === 'female' || isGirlClass;
 
       return {
@@ -229,12 +227,37 @@ export default function TeacherResultAnalyticsPage() {
     loadClassStudents(newClassId);
   };
 
-  const handleMarksChange = (studentId: string, val: string) => {
-    if (val.toUpperCase() === 'A') {
+  // 🎯 DYNAMIC MARKS HANDLER: Numbers first, and 'A' / 'a' allowed smoothly
+  const handleMarksChange = (studentId: string, inputVal: string) => {
+    const trimmed = inputVal.trim();
+
+    // 1. If empty, clear field
+    if (trimmed === '') {
+      setMarksMap((prev) => ({ ...prev, [studentId]: '' }));
+      return;
+    }
+
+    // 2. If user specifically inputs 'A' or 'a' for Absent
+    if (trimmed.toUpperCase() === 'A' || trimmed.toLowerCase() === 'absent') {
       setMarksMap((prev) => ({ ...prev, [studentId]: 'A' }));
       return;
     }
-    setMarksMap((prev) => ({ ...prev, [studentId]: val }));
+
+    // 3. If numeric input (digits or decimal)
+    // Filter out non-numeric characters except single decimal point
+    const cleanedNum = trimmed.replace(/[^0-9.]/g, '');
+    if (cleanedNum !== '') {
+      const numVal = parseFloat(cleanedNum);
+      if (!isNaN(numVal)) {
+        // Clamp to total marks maximum
+        const finalVal = Math.min(totalMarks, Math.max(0, numVal));
+        setMarksMap((prev) => ({ ...prev, [studentId]: cleanedNum.endsWith('.') ? cleanedNum : String(finalVal) }));
+        return;
+      }
+    }
+
+    // Fallback: update state directly
+    setMarksMap((prev) => ({ ...prev, [studentId]: trimmed }));
   };
 
   // SAVE RESULT WITH STRICT VALIDATION & DUPLICATE BLOCKING
@@ -249,7 +272,7 @@ export default function TeacherResultAnalyticsPage() {
       return;
     }
 
-    // 1. STRICT VALIDATION: Check if ALL student fields are filled
+    // STRICT VALIDATION: Check if ALL student fields are filled
     const unfilledStudents = studentsList.filter((st) => {
       const val = (marksMap[st.id] ?? '').toString().trim();
       return val === '';
@@ -260,12 +283,12 @@ export default function TeacherResultAnalyticsPage() {
         show: true,
         type: 'error',
         title: 'Incomplete Marks Entry',
-        message: `Please fill marks for all ${studentsList.length} students! Type 'A' or 'a' for absent students. (${unfilledStudents.length} remaining)`,
+        message: `Please enter marks for all ${studentsList.length} students! Type marks or 'A' for absent students. (${unfilledStudents.length} remaining)`,
       });
       return;
     }
 
-    // 2. DUPLICATE CHECK: Prevent saving if already saved
+    // DUPLICATE CHECK
     if (isDuplicateTest) {
       setPopup({
         show: true,
@@ -337,7 +360,7 @@ export default function TeacherResultAnalyticsPage() {
     }
   };
 
-  // Delete/Reverse Test Result if saved incorrectly
+  // Delete/Reverse Test Result
   const handleDeleteSubjectTest = async (testId: string, subjectName: string) => {
     if (!confirm(`Are you sure you want to delete/reverse the test result for ${subjectName}?`)) return;
 
@@ -596,13 +619,13 @@ export default function TeacherResultAnalyticsPage() {
         )}
       </div>
 
-      {/* 4. MARKS ENTRY TABLE (ALL FIELDS REQUIRED) */}
+      {/* 4. MARKS ENTRY TABLE (EASY DIRECT NUMBER & 'A' INPUT) */}
       <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4 print:hidden">
         <div className="flex justify-between items-center border-b pb-3">
           <h3 className="text-xs font-black text-blue-950 uppercase tracking-wider">
             STUDENT MARKS ENTRY ({studentsList.length} STUDENTS)
           </h3>
-          <span className="text-xs text-rose-600 font-bold">* All Student Fields Are Required (Type Marks or 'A')</span>
+          <span className="text-xs text-rose-600 font-bold">* Direct Numbers & 'A' for Absent Allowed</span>
         </div>
 
         <div className="space-y-2 max-h-96 overflow-y-auto">
@@ -615,6 +638,7 @@ export default function TeacherResultAnalyticsPage() {
             let grade = 'A+';
             let gradeBg = 'bg-emerald-100 text-emerald-800';
             if (isAbsent) { grade = 'ABSENT'; gradeBg = 'bg-rose-100 text-rose-800'; }
+            else if (rawVal === '') { grade = '-'; gradeBg = 'bg-slate-100 text-slate-500'; }
             else if (pct < 40) { grade = 'F'; gradeBg = 'bg-rose-100 text-rose-800'; }
             else if (pct < 50) { grade = 'D'; gradeBg = 'bg-orange-100 text-orange-800'; }
             else if (pct < 60) { grade = 'C'; gradeBg = 'bg-amber-100 text-amber-800'; }
@@ -640,7 +664,7 @@ export default function TeacherResultAnalyticsPage() {
                     <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Obtained / 'A' *</label>
                     <input
                       type="text"
-                      placeholder="Marks or A"
+                      placeholder="e.g. 85 or A"
                       disabled={isDuplicateTest}
                       className="w-28 p-2 border rounded-xl font-bold font-mono text-center text-sm bg-white outline-none focus:border-blue-950 text-blue-950 uppercase disabled:opacity-50"
                       value={marksMap[st.id] ?? ''}
@@ -651,7 +675,7 @@ export default function TeacherResultAnalyticsPage() {
                   <div className="text-center">
                     <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Grade & Status</label>
                     <span className={`px-3 py-1.5 rounded-xl font-black text-xs block font-mono ${gradeBg}`}>
-                      {grade} ({isAbsent ? '0' : pct}%)
+                      {grade} ({isAbsent ? '0%' : rawVal !== '' ? `${pct}%` : '-'})
                     </span>
                   </div>
                 </div>
