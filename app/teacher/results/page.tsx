@@ -227,37 +227,27 @@ export default function TeacherResultAnalyticsPage() {
     loadClassStudents(newClassId);
   };
 
-  // 🎯 DYNAMIC MARKS HANDLER: Numbers first, and 'A' / 'a' allowed smoothly
+  // 🎯 Pure Number input handler
   const handleMarksChange = (studentId: string, inputVal: string) => {
-    const trimmed = inputVal.trim();
-
-    // 1. If empty, clear field
-    if (trimmed === '') {
+    if (inputVal === '') {
       setMarksMap((prev) => ({ ...prev, [studentId]: '' }));
       return;
     }
 
-    // 2. If user specifically inputs 'A' or 'a' for Absent
-    if (trimmed.toUpperCase() === 'A' || trimmed.toLowerCase() === 'absent') {
+    const numVal = parseFloat(inputVal);
+    if (!isNaN(numVal)) {
+      const finalVal = Math.min(totalMarks, Math.max(0, numVal));
+      setMarksMap((prev) => ({ ...prev, [studentId]: String(finalVal) }));
+    }
+  };
+
+  // 🎯 1-Tap Toggle Absent (A) Button
+  const handleToggleAbsent = (studentId: string) => {
+    if (marksMap[studentId] === 'A') {
+      setMarksMap((prev) => ({ ...prev, [studentId]: '' }));
+    } else {
       setMarksMap((prev) => ({ ...prev, [studentId]: 'A' }));
-      return;
     }
-
-    // 3. If numeric input (digits or decimal)
-    // Filter out non-numeric characters except single decimal point
-    const cleanedNum = trimmed.replace(/[^0-9.]/g, '');
-    if (cleanedNum !== '') {
-      const numVal = parseFloat(cleanedNum);
-      if (!isNaN(numVal)) {
-        // Clamp to total marks maximum
-        const finalVal = Math.min(totalMarks, Math.max(0, numVal));
-        setMarksMap((prev) => ({ ...prev, [studentId]: cleanedNum.endsWith('.') ? cleanedNum : String(finalVal) }));
-        return;
-      }
-    }
-
-    // Fallback: update state directly
-    setMarksMap((prev) => ({ ...prev, [studentId]: trimmed }));
   };
 
   // SAVE RESULT WITH STRICT VALIDATION & DUPLICATE BLOCKING
@@ -283,7 +273,7 @@ export default function TeacherResultAnalyticsPage() {
         show: true,
         type: 'error',
         title: 'Incomplete Marks Entry',
-        message: `Please enter marks for all ${studentsList.length} students! Type marks or 'A' for absent students. (${unfilledStudents.length} remaining)`,
+        message: `Please enter marks for all ${studentsList.length} students! Type marks or click 'A' for absent students. (${unfilledStudents.length} remaining)`,
       });
       return;
     }
@@ -455,7 +445,7 @@ export default function TeacherResultAnalyticsPage() {
         <div className="border-b pb-2 flex justify-between items-center flex-wrap gap-2">
           <div>
             <h2 className="text-xl font-black text-blue-950">Subject Result & Performance Analytics</h2>
-            <p className="text-xs text-gray-500">Enter marks (or 'A' for absent) to auto-generate class consolidated sheets</p>
+            <p className="text-xs text-gray-500">Enter marks (or click 'A' for absent) to auto-generate class consolidated sheets</p>
           </div>
 
           {isDuplicateTest && (
@@ -619,13 +609,13 @@ export default function TeacherResultAnalyticsPage() {
         )}
       </div>
 
-      {/* 4. MARKS ENTRY TABLE (EASY DIRECT NUMBER & 'A' INPUT) */}
+      {/* 4. MARKS ENTRY TABLE (PURE NUMERIC INPUT + 1-TAP ABSENT BUTTON) */}
       <div className="bg-white p-5 rounded-3xl shadow-sm border space-y-4 print:hidden">
         <div className="flex justify-between items-center border-b pb-3">
           <h3 className="text-xs font-black text-blue-950 uppercase tracking-wider">
             STUDENT MARKS ENTRY ({studentsList.length} STUDENTS)
           </h3>
-          <span className="text-xs text-rose-600 font-bold">* Direct Numbers & 'A' for Absent Allowed</span>
+          <span className="text-xs text-rose-600 font-bold">* Direct Numbers & Click [A] for Absent</span>
         </div>
 
         <div className="space-y-2 max-h-96 overflow-y-auto">
@@ -659,22 +649,43 @@ export default function TeacherResultAnalyticsPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <div>
-                    <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Obtained / 'A' *</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. 85 or A"
-                      disabled={isDuplicateTest}
-                      className="w-28 p-2 border rounded-xl font-bold font-mono text-center text-sm bg-white outline-none focus:border-blue-950 text-blue-950 uppercase disabled:opacity-50"
-                      value={marksMap[st.id] ?? ''}
-                      onChange={(e) => handleMarksChange(st.id, e.target.value)}
-                    />
+                    <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Obtained Marks</label>
+                    <div className="flex items-center gap-1.5">
+                      {/* PURE NUMBER INPUT -> DEFAULTS TO NUMERIC KEYPAD */}
+                      <input
+                        type={isAbsent ? "text" : "number"}
+                        inputMode="numeric"
+                        placeholder="Marks"
+                        disabled={isDuplicateTest || isAbsent}
+                        className={`w-24 p-2 border rounded-xl font-bold font-mono text-center text-sm outline-none focus:border-blue-950 disabled:opacity-75 ${
+                          isAbsent ? 'bg-rose-50 border-rose-300 text-rose-700 font-black' : 'bg-white text-blue-950'
+                        }`}
+                        value={isAbsent ? 'ABSENT' : marksMap[st.id] ?? ''}
+                        onChange={(e) => handleMarksChange(st.id, e.target.value)}
+                      />
+                      
+                      {/* 1-TAP QUICK ABSENT BUTTON */}
+                      <button
+                        type="button"
+                        onClick={() => handleToggleAbsent(st.id)}
+                        disabled={isDuplicateTest}
+                        className={`px-3 py-2 rounded-xl text-xs font-black border transition active:scale-95 ${
+                          isAbsent
+                            ? 'bg-rose-700 text-white border-rose-800 shadow-inner'
+                            : 'bg-slate-200 hover:bg-rose-100 text-slate-700 hover:text-rose-900 border-slate-300'
+                        }`}
+                        title="Mark Absent"
+                      >
+                        A
+                      </button>
+                    </div>
                   </div>
 
                   <div className="text-center">
                     <label className="text-[10px] font-bold text-gray-500 block mb-0.5">Grade & Status</label>
-                    <span className={`px-3 py-1.5 rounded-xl font-black text-xs block font-mono ${gradeBg}`}>
+                    <span className={`px-3 py-2 rounded-xl font-black text-xs block font-mono ${gradeBg}`}>
                       {grade} ({isAbsent ? '0%' : rawVal !== '' ? `${pct}%` : '-'})
                     </span>
                   </div>
