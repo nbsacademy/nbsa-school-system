@@ -46,7 +46,7 @@ export default function ClassAttendanceRegisterPage() {
     }
   };
 
-  // Strictly Load Students Matching Selected Class ID Only
+  // Strictly Load Students Matching Selected Class ID, Ordered by Roll Number (1, 2, 3...)
   const loadClassStudentsAndAttendance = async (classId: string, dateStr: string) => {
     if (!classId) return;
 
@@ -54,14 +54,24 @@ export default function ClassAttendanceRegisterPage() {
     setStudentsList([]); 
     setAttendanceMap({});
 
-    // Strictly Query Students belonging ONLY to the selected class_id
+    // Query Students belonging ONLY to the selected class_id, strictly ordered by roll_no
     const { data: stData } = await supabase
       .from('students')
       .select('*')
       .eq('class_id', classId)
+      .order('roll_no', { ascending: true, nullsFirst: false })
       .order('full_name', { ascending: true });
 
-    const currentStudents = stData || [];
+    // Ensure strict numeric sorting by roll_no on client side as well
+    const currentStudents = (stData || []).sort((a, b) => {
+      const rollA = parseInt(a.roll_no, 10);
+      const rollB = parseInt(b.roll_no, 10);
+      if (isNaN(rollA) && isNaN(rollB)) return (a.full_name || '').localeCompare(b.full_name || '');
+      if (isNaN(rollA)) return 1;
+      if (isNaN(rollB)) return -1;
+      return rollA - rollB;
+    });
+
     setStudentsList(currentStudents);
 
     // Check Existing Attendance for this Specific Class & Date
@@ -189,7 +199,7 @@ export default function ClassAttendanceRegisterPage() {
     waText += `❌ *ABSENT STUDENTS (${absentStudents.length}):*\n`;
     if (absentStudents.length > 0) {
       absentStudents.forEach((st, idx) => {
-        waText += `${idx + 1}. ${st.full_name} (Reg: ${st.registration_no || 'A-2026-0001'})\n`;
+        waText += `${idx + 1}. Roll #${st.roll_no || idx + 1} - ${st.full_name} (Reg: ${st.registration_no || 'A-2026-0001'})\n`;
       });
     } else {
       waText += `(All Present / No Absentees)\n`;
@@ -198,7 +208,7 @@ export default function ClassAttendanceRegisterPage() {
     waText += `\n🟡 *LEAVE / ON-LEAVE STUDENTS (${leaveStudents.length}):*\n`;
     if (leaveStudents.length > 0) {
       leaveStudents.forEach((st, idx) => {
-        waText += `${idx + 1}. ${st.full_name} (Reg: ${st.registration_no || 'A-2026-0001'})\n`;
+        waText += `${idx + 1}. Roll #${st.roll_no || idx + 1} - ${st.full_name} (Reg: ${st.registration_no || 'A-2026-0001'})\n`;
       });
     } else {
       waText += `(None)\n`;
@@ -207,7 +217,7 @@ export default function ClassAttendanceRegisterPage() {
     waText += `\n✅ *PRESENT STUDENTS (${presentStudents.length}):*\n`;
     if (presentStudents.length > 0) {
       presentStudents.forEach((st, idx) => {
-        waText += `${idx + 1}. ${st.full_name}\n`;
+        waText += `${idx + 1}. Roll #${st.roll_no || idx + 1} - ${st.full_name}\n`;
       });
     }
 
@@ -352,10 +362,10 @@ export default function ClassAttendanceRegisterPage() {
           </div>
         </div>
 
-        {/* Student Attendance List */}
+        {/* Student Attendance List Sorted Strictly by Roll Number */}
         <div className="space-y-3 pt-2">
           <h3 className="text-xs font-black text-blue-900 uppercase tracking-wider">
-            STUDENT ATTENDANCE LIST ({studentsList.length})
+            STUDENT ATTENDANCE LIST (ROLL NUMBER SERIAL WISE) ({studentsList.length})
           </h3>
 
           <div className="space-y-2 max-h-96 overflow-y-auto">
